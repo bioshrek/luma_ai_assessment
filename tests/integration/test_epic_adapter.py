@@ -400,6 +400,23 @@ def test_a_full_run_records_the_heterogeneity_and_the_licence(container: Contain
     assert licences == {"cc-by-nc-4.0"}
 
 
+def test_an_episode_reloaded_from_the_catalog_still_declares_its_streams(
+    container: Container,
+) -> None:
+    """Regression: `stream_specs` was on the entity but not in the `episodes` table, so a re-QC
+    — which rebuilds the episode from the row, not from the adapter — met `streams/gyro.parquet`
+    on disk with an empty declaration and tripped invariant 17. It cost 40 of 60 real episodes.
+    """
+    _ingest(container, "epic100")
+    with container.unit_of_work() as uow:
+        with_imu = uow.episodes.get("epic100:P01_103_0")
+        without_imu = uow.episodes.get("epic100:P01_01_0")
+    assert with_imu is not None and with_imu.meta is not None
+    assert set(with_imu.meta.stream_specs) == {"gyro", "accel"}
+    assert without_imu is not None and without_imu.meta is not None
+    assert without_imu.meta.stream_specs == {}
+
+
 def _query(container: Container, sql: str) -> list[tuple[object, ...]]:
     conn = sqlite3.connect(container.paths.catalog)
     try:

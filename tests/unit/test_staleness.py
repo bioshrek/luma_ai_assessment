@@ -5,11 +5,15 @@ from __future__ import annotations
 import pytest
 from tests import factories
 
-from rdp.domain.episode import Episode
+from rdp.domain.episode import SCHEMA_VERSION, Episode
 from rdp.domain.stage import IngestionStage
 from rdp.domain.staleness import PipelineVersions, Staleness, assess
 
-CURRENT = PipelineVersions(schema_version="1.0", adapter_version="a@1", ruleset_version="r@1")
+# Pinned to whatever the domain currently declares: this suite is about the *comparison*, not
+# about any one schema number, and hard-coding one only breaks on every schema bump.
+CURRENT = PipelineVersions(
+    schema_version=SCHEMA_VERSION, adapter_version="a@1", ruleset_version="r@1"
+)
 
 
 def committed(**overrides: object) -> Episode:

@@ -10,6 +10,8 @@ from rdp.domain.action_spec import (
     Channel,
     ChannelRole,
     ChannelSpace,
+    GripperInverse,
+    GripperSpec,
     ReferenceFrame,
     RotationRepr,
     RotationSpec,
@@ -19,10 +21,49 @@ from rdp.domain.action_spec import (
     Unit,
 )
 from rdp.domain.boundary import EndReason, EpisodeBoundary, SuccessAdjudicator, TerminationSource
+from rdp.domain.camera import CameraEncoding, CameraMount, CameraSpec
 from rdp.domain.capabilities import Capabilities
 from rdp.domain.episode import EpisodeMeta, make_uid
 from rdp.domain.frames import FrameTable
 from rdp.domain.provenance import Provenance
+from rdp.domain.segment import EpisodeSegment
+
+
+def camera(
+    name: str = "top",
+    encoding: CameraEncoding = CameraEncoding.MP4_SIDECAR,
+    is_present: bool = True,
+    n_frames: int | None = None,
+) -> CameraSpec:
+    return CameraSpec(
+        name=name,
+        mount=CameraMount.STATIC,
+        resolution=(96, 96),
+        channels=3,
+        encoding=encoding,
+        is_present=is_present,
+        n_frames=n_frames,
+    )
+
+
+def gripper_channel(name: str = "gripper", is_delta: bool = False) -> Channel:
+    """A gripper the way B declares it (absolute opening) or C does (a change command)."""
+    return Channel(
+        name=name,
+        role=ChannelRole.GRIPPER,
+        space=ChannelSpace.GRIPPER,
+        origin=SignalOrigin.MEASURED,
+        is_delta=is_delta,
+        is_physical=True,
+        unit=Unit.NORMALIZED,
+        metric_convertible=False,
+        group="gripper",
+        gripper=GripperSpec(
+            convention="normalized_unverified_direction",
+            original_convention="normalized_unverified_direction",
+            inverse=GripperInverse(scale=1.0, offset=0.0),
+        ),
+    )
 
 
 def xy_channels() -> tuple[Channel, ...]:
@@ -80,12 +121,30 @@ def pose_channels() -> tuple[Channel, ...]:
     return translation + rotation
 
 
+def flag_channel(name: str = "flag.terminate_episode") -> Channel:
+    """Source C's terminate flag: not a physical quantity, and must stay out of statistics."""
+    return Channel(
+        name=name,
+        role=ChannelRole.CONTROL_FLAG,
+        space=ChannelSpace.FLAG,
+        origin=SignalOrigin.MEASURED,
+        is_delta=False,
+        is_physical=False,
+        metric_convertible=False,
+        min=0.0,
+        max=1.0,
+    )
+
+
 def spec(
-    is_command: bool = True, level: SignalLevel = SignalLevel.PER_FRAME_CONTINUOUS
+    is_command: bool = True,
+    level: SignalLevel = SignalLevel.PER_FRAME_CONTINUOUS,
+    channels: Sequence[Channel] | None = None,
 ) -> SignalSpec:
     per_frame = level in (SignalLevel.PER_FRAME_CONTINUOUS, SignalLevel.PER_FRAME_DISCRETE)
-    channels = xy_channels() if per_frame else ()
-    return SignalSpec(is_command=is_command, level=level, channels=channels)
+    if channels is None:
+        channels = xy_channels() if per_frame else ()
+    return SignalSpec(is_command=is_command, level=level, channels=tuple(channels))
 
 
 def frames(n: int = 4, dt: float = 0.1) -> FrameTable:
@@ -128,9 +187,15 @@ def meta(
     timestamp_source: str = "real",
     action_level: SignalLevel = SignalLevel.PER_FRAME_CONTINUOUS,
     source_id: str = "pusht",
+    action_spec: SignalSpec | None = None,
     state_spec: SignalSpec | None = None,
     capabilities: Capabilities | None = None,
     stream_specs: Mapping[str, SignalSpec] | None = None,
+    cameras: Sequence[CameraSpec] = (),
+    segment: EpisodeSegment | None = None,
+    termination_column: str | None = None,
+    raw_frame_columns: Sequence[str] = (),
+    fps_nominal: float | None = 10.0,
 ) -> EpisodeMeta:
     return EpisodeMeta(
         uid=make_uid(source_id, upstream_id),
@@ -138,14 +203,18 @@ def meta(
         upstream_id=upstream_id,
         embodiment="pusht_planar",
         n_frames=n_frames,
-        action_spec=spec(is_command=True, level=action_level),
+        action_spec=action_spec or spec(is_command=True, level=action_level),
         state_spec=state_spec or spec(is_command=False),
         stream_specs=dict(stream_specs or {}),
         capabilities=capabilities
         or Capabilities(has_action=action_level != SignalLevel.ABSENT, has_state=True),
         provenance=provenance(timestamp_source),
         boundary=boundary(),
-        fps_nominal=10.0,
+        cameras=tuple(cameras),
+        segment=segment,
+        termination_column=termination_column,
+        raw_frame_columns=tuple(raw_frame_columns),
+        fps_nominal=fps_nominal,
     )
 
 
