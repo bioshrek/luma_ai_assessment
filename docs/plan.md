@@ -24,65 +24,117 @@
 
 要求：≥3 个来源、≥2 种存储格式、含一个非标准/非单臂来源。计划选 4 个（第 4 个是"优雅降级"的证据，量很小）：
 
-| #   | 来源                                                                                                            | 格式                            | 本体                | action 维度/语义                                                      | 帧率                | 相机 | 真机/仿真 |
-| --- | --------------------------------------------------------------------------------------------------------------- | ------------------------------- | ------------------- | --------------------------------------------------------------------- | ------------------- | ---- | --------- |
-| A   | `lerobot/pusht`                                                                                                 | Parquet + MP4                   | 2D 推块（非机械臂） | 2 维，末端 xy 位置目标                                                | 10 Hz               | 1    | 仿真      |
-| B   | `lerobot/aloha_sim_insertion_human`                                                                             | Parquet + MP4                   | ALOHA 双臂          | 14 维，双臂关节位置 + 夹爪                                            | 50 Hz               | 1~4  | 仿真      |
-| C   | OXE 小切片（`jxu124/OpenX-Embodiment` 中体量小的 sub-dataset，首选 `berkeley_autolab_ur5`，备选 `bridge` 切片） | RLDS/TFDS（episode→steps 嵌套） | UR5 单臂            | 7 维物理（末端 delta 位姿 + 夹爪）+ 3 维 `terminate_episode` 控制标志 | 5~10 Hz（无时间戳） | 2~3  | 真机      |
-| D   | **EPIC-KITCHENS-100（本地已有副本）**                                                                           | 长视频 MP4 + JSON 时序标注      | 人手（无本体感知）  | **无 action、无 state**                                               | 30 fps（已重编码）  | 1    | 真人      |
+| #   | 来源                                                                                                            | 格式                                               | 本体                | action 维度/语义                                                                                      | 帧率                                           | 相机 | 真机/仿真 |
+| --- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------- | ---- | --------- |
+| A   | `lerobot/pusht`                                                                                                 | Parquet + MP4                                      | 2D 推块（非机械臂） | 2 维，末端 xy 位置目标                                                                                | 10 Hz                                          | 1    | 仿真      |
+| B   | `lerobot/aloha_sim_insertion_human`                                                                             | Parquet + MP4                                      | ALOHA 双臂          | 14 维，双臂关节位置 + 夹爪                                                                            | 50 Hz                                          | 1~4  | 仿真      |
+| C   | OXE 小切片（`jxu124/OpenX-Embodiment` 中体量小的 sub-dataset，首选 `berkeley_autolab_ur5`，备选 `bridge` 切片） | RLDS/TFDS（episode→steps 嵌套）                    | UR5 单臂            | 7 维物理（末端 delta 位姿 + 夹爪）+ 3 维 `terminate_episode` 控制标志                                 | 5~10 Hz（无时间戳）                            | 2~3  | 真机      |
+| D   | **EPIC-KITCHENS-100（官方发布，分层取用）**                                                                     | CSV/pickle 标注 + JSON 相机位姿 + IMU + 长视频 MP4 | 人手 / 头戴相机     | **符号级**：(verb, noun) + 时间区间，episode 级标签，无逐帧连续 action；state 有 IMU(6) + 相机位姿(7) | 事件 ~0.1~1 Hz；IMU ~200 Hz；视频 50/59.94 fps | 1    | 真人      |
 
 选型理由（要写进文档）：
 
 - A 的 action 是**任务空间绝对位置（像素单位）**、B 是**关节空间绝对位置（弧度）**、C 是**末端相对增量（米/弧度）**——三种物理含义、三种单位、三种坐标系，正是"统一表示"最难的地方，比选三个都是 7-DoF 单臂更有说服力。
 - A/B 同为 LeRobot 格式但本体/维度/帧率差异大，可以验证"同格式不同本体"的适配器复用。
-- D 用来证明 schema 能靠**可空字段 + capability 声明**降级，而不是塞 0 或抛异常；且它是本地文件源、无网络依赖，正好验证"数据源是可插拔插件"这一架构主张（见第 8 节）。
+- **D 是唯一一个「action 存在但表示层级不同」的来源**：它的动作是符号标签（(verb, noun) + 时间区间），不是逐帧向量。A/B/C 三个源的 action 都是「逐帧定宽数值向量」，schema 里这个隐含假设永远不会被检验；D 逼出 `SignalSpec.level` 这个正交维度（见 2.2a）。
+- **D 还是唯一一个「信号来源混杂」且「源内 capability 不齐」的来源**：IMU 是实测、相机位姿是 SfM 估计、动作标签是人工标注，三种可信度在同一条 episode 里；且 IMU 只覆盖部分视频、位姿只覆盖 671/700 视频。这两件事分别逼出 `Provenance.signal_origin`（2.2f）与「capability 必须逐 episode 而非逐 source」的验收断言（1.1 第 5 点）。
 
 规模控制：每个来源限制 30~80 个 episode，总量目标 8~12 万帧，`config/sources.yaml` 里用 `max_episodes` 收口。
 
-**取舍（需在文档明确写出）**：默认 `--no-video`，A/B 只拉低维信号与视频**元信息**（HTTP Range 读 mp4 头 / `ffprobe` 拿帧数与分辨率，不下载完整视频）。代价是：涉及画面内容的质检（黑帧、曝光异常、相机错位）降级为"仅结构性检查"（帧数一致性、路数缺失、分辨率一致性）。提供 `--with-video` 开关，对小样本（如每源 5 个 episode）下全量视频，跑完整的画面级质检，证明能力存在。D 因为视频已在本地，画面级质检默认就能跑（只 `ffprobe` + 抽稀疏关键帧，不全解码）。
+**取舍（需在文档明确写出）**：默认 `--no-video`，A/B 只拉低维信号与视频**元信息**（HTTP Range 读 mp4 头 / `ffprobe` 拿帧数与分辨率，不下载完整视频）。代价是：涉及画面内容的质检（黑帧、曝光异常、相机错位）降级为"仅结构性检查"（帧数一致性、路数缺失、分辨率一致性）。提供 `--with-video` 开关，对小样本（如每源 5 个 episode）下全量视频，跑完整的画面级质检，证明能力存在。D 的官方视频体量在百 GB 量级，默认同样不取；`--with-video` 时优先走本地镜像（见 1.1 第 6 点），但必须按镜像的 fps 重算帧号。
 
 **但 C 是例外，这个取舍对它不成立**：RLDS 把图像以数组形式**内嵌在与 action 同一批记录里**，没有独立 mp4 可以跳过。`--no-video` 对 C 是空操作：省不下带宽，只能省解码与落盘。因此 C 的记录为 `CameraSpec.encoding="inline_frames"`，`has_rgb=True` 但 `has_video=False`（见 2.2e），依赖 `has_video` 的规则在 C 上 `SKIPPED`。不写清楚的话，上面那段取舍描述对四分之一的来源是错的。
 
-### 1.1 来源 D 的落地细节（本地 EPIC-KITCHENS-100）
+### 1.1 来源 D 的落地细节（EPIC-KITCHENS-100，官方发布 + 分层取用）
 
-实际目录（已核实）：
+**先纠正上一版的两个错误结论**，它们都会让整个 D 的设计走偏（这两条也应写进 `docs/ai/rejected.md`，见第 9 节）：
 
-```
-~/Documents/datasets/epic_kitchens_100/
-  annotations/
-    epic_kitchens_full.json      # {version, database: {video_id: {subset, duration, annotations:[...]}}}，700 个视频
-    epic_kitchens_verb.json / epic_kitchens_noun.json   # 同结构的任务切分变体
-    labels_verb.json / labels_noun.json                  # id_XXX -> 动词/名词 文本
-    category_idx_verb.txt / category_idx_noun.txt
-  raw_data/epic_kitchens_100_30fps_512x288/
-    P01_01.mp4 … （700 个长视频，共 ~30 GB）
-```
+1. ~~"本地已有副本 = 数据来源"~~。本地那份 512×288 / 30fps 是**为另一个项目重编码的衍生品**。把它当权威来源，等于让全库的帧号绑死在一个非官方的 fps 上。**权威来源是官方发布**；本地副本降级为**可选镜像**，而且它的新角色更有价值：验证"同一 episode 在两个副本里 fps 不同"时 `provenance` 能不能表达出来并让帧号重算（见第 6 点）。
+2. ~~"D 无 action、无 state"~~。**这是错的。** D 的 action 存在，只是**表示层级不同**：它是"(动词, 名词) + 时间区间"的符号标签，不是逐帧连续向量。而且 EPIC-KITCHENS 生态里有**两路真正的逐帧物理信号**（IMU 与相机位姿）。写 `ActionSpec.space="none"` 不是优雅降级，是把有信息说成没信息——比补零更隐蔽的一种信息破坏。
 
-单条标注长这样：
+#### 官方可取的数据层（已核实）
 
-```json
-"P01_01": {"subset": "train", "duration": 1652.152817, "annotations": [
-  {"segment": [0.14, 3.37], "verb_label": "id_003", "verb_label_name": "open",
-   "noun_label": "id_003", "noun_label_name": "door"}, …]}
-```
+| 层                                        | 内容                                                                            | 体量            | 本轮                                 |
+| ----------------------------------------- | ------------------------------------------------------------------------------- | --------------- | ------------------------------------ |
+| `epic-kitchens-100-annotations`（GitHub） | 89.9K action segments、97 动词 / 300 名词、20.5K 条自然语言 narration、官方切分 | ~50 MB，可进 CI | **必取**                             |
+| **EPIC-Fields**（NeurIPS'23）             | 671 视频 / 18.7M 帧的 **6-DoF 相机外参 + 内参**（COLMAP 重建）                  | 每视频一个 JSON | **必取**                             |
+| **IMU**（Extended Sequences 附带）        | 陀螺仪 + 加速度计（头戴相机自带）                                               | 中等，按视频取  | **取（限几个视频）**                 |
+| VISOR（NeurIPS'22）                       | 271K 人工掩膜 + 9.9M 稠密插值掩膜 + 67K 手-物接触关系                           | 大              | 本轮不取，登记为已知局限（第 11 节） |
+| EPIC-SOUNDS                               | 117.5K 音频事件 / 44 类                                                         | —               | 不取                                 |
+| 视频本体                                  | 700 长视频，原始 1080p @ 50/59.94 fps                                           | 数百 GB         | 默认不取；`--with-video` 走本地镜像  |
 
-关键决策：
-
-1. **episode 的粒度 = 一个动作 segment，不是一整条视频。** `P01_01` 单条就有 1652 秒（≈5 万帧），语义上等价于"一整个采集 session"，而 `segment` 才对应机器人数据里的一条示教轨迹（一个原子操作）。`episode_uid = "epic100:P01_01#0042"`，`task = "open door"`（verb + noun 拼成自然语言指令，与 C 的 `language_instruction` 对齐）。
-2. **不下载、不解码全量视频。** 只用 `ffprobe` 读 `P01_01.mp4` 的 fps / 分辨率 / 总帧数（每个视频一次，缓存到 SQLite），segment 的帧范围由 `round(t * fps)` 换算得到；帧级 parquet 里只有 `frame_index` 与 `timestamp`，`action/state` 全为 NULL。
-3. **预处理来源必须显式登记为 provenance，这是本项目最好的一个"有损变换要可追溯"的实例。** 该副本是**为另一个项目重编码过的**：512×288、30 fps，与官方原始视频（1080p，部分 50/59.94 fps）不同。因此 `episode.json` 里写：
+单条标注（官方 CSV 的等价视图）：
 
 ```json
-"provenance": {
-  "is_original": false,
-  "transforms": [{"op": "transcode", "fps": 30, "resolution": [512, 288],
-                  "note": "upstream original is 1080p @50/59.94fps; re-encoded for a prior project"}],
-  "timestamp_source": "annotation_seconds",
-  "frame_index_source": "derived_from_seconds@30fps"
+{
+  "narration_id": "P01_01_16",
+  "participant_id": "P01",
+  "video_id": "P01_01",
+  "start_timestamp": "00:00:00.14",
+  "stop_timestamp": "00:00:03.37",
+  "narration": "open the door",
+  "verb": "open",
+  "verb_class": 3,
+  "noun": "door",
+  "noun_class": 3
 }
 ```
 
-代价要写清楚：(a) 秒 → 帧号的换算依赖本地 fps，若日后换回原始视频，帧号必须重算，所以**入库存的是秒（权威）+ 帧号（派生）**，不能只存帧号；(b) 288p 不足以做精细手部/接触判断，本轮不做视觉标签，只做结构性质检。4. 选样：从 `database` 里按 participant 分散挑 5~8 个视频、每个视频取前 N 个 segment（`config/sources.yaml` 控制），总量控制在几千到一万帧级别——D 的价值是**证明降级路径**，不是堆量。5. 私密性：本地绝对路径只出现在 `config/sources.local.yaml`（gitignore），仓库里提交的是 `${EPIC_KITCHENS_ROOT}` 环境变量占位版本。评审方没有这份数据时，该 source 自动标记为 `unavailable` 并跳过，不影响其余三源跑通——这一点必须写进 README，否则验收会直接失败。
+#### 关键决策
+
+**1. episode 的粒度 = 一个 action segment，不是一整条视频。** `P01_01` 长 1652 秒（≈8 万帧 @50fps），语义上等价于"一整个采集 session"；`segment`（几秒）才对应机器人数据里的一条示教轨迹。`episode_uid = "epic100:P01_01_16"`——直接用官方 `narration_id`，它是**稳定的上游 ID**，因此 D 不像 C 那样需要自造 `upstream_id`（见第 5 节）。
+
+**2. D 的 action 是 `level="episode_label"`，不是 `space="none"`。** 依赖 2.2a 新增的 `SignalSpec.level` 维度：
+
+- `task = "open door"`（verb + noun 拼接），与 C 的 `language_instruction` 同一个槽位；narration 原文与 `verb_class` / `noun_class` 另存进 `raw_extra`。
+- `has_action = True`、`ActionSpec.level = "episode_label"`、`physical_dim = 0`，`frames.parquet` 里**没有** action 列（不是全 NULL 的列，是根本没有这一列）。
+- 依赖逐帧数值的规则（`ACTION_RANGE` / `ACTION_JERK` / `GRIPPER_STUCK`）在 D 上 `SKIPPED(reason=action_level_is_episode_label)`——理由是具体的，而不是笼统的"没有 action"。
+
+**3. D 的 state 是真实存在的逐帧信号，而且是四源里唯一"来源混杂"的一个。** 两组通道：
+
+| 通道组     | 来源        | `role` | `space`                   | `unit`  | `metric_convertible`      | `origin`    |
+| ---------- | ----------- | ------ | ------------------------- | ------- | ------------------------- | ----------- |
+| `gyro[3]`  | IMU 实测    | `head` | `imu_angular_velocity`    | `rad/s` | **True**                  | `measured`  |
+| `accel[3]` | IMU 实测    | `head` | `imu_linear_acceleration` | `m/s^2` | **True**                  | `measured`  |
+| `cam_t[3]` | EPIC-Fields | `head` | `camera_translation_abs`  | `None`  | **False**（SfM 尺度任意） | `estimated` |
+| `cam_q[4]` | EPIC-Fields | `head` | `camera_rotation_abs`     | `None`  | False                     | `estimated` |
+
+`cam_q` 的 `rotation = {"repr": "quat_wxyz", "compose": None}`（绝对旋转不存在复合顺序问题），`frame = "world"`。IMU 的单位约定（rad/s vs deg/s）**M0 必须实测确认，不得照抄文档**。
+
+这一组把此前各源分别暴露的洞**第一次叠在同一个向量里**：C 只逼出了 `Channel.rotation`，A 只逼出了 `metric_convertible=False`（而且只是 2D 像素）。D 是**一个完整 6-DoF 位姿同时不可换算**——SfM 重建没有绝对尺度，这不是"我们没查到单位"，是数学上就不存在尺度。硬填 `unit="m"` 会让下游把重建坐标当米用。
+
+**4. 新增 `Provenance.signal_origin`（见 2.2f）：`measured` / `estimated` / `interpolated` / `annotated` / `synthesized`。** 这不是学究气，它直接改变质检语义：
+
+- COLMAP 位姿里的一个跳变**大概率是重建失败，不是数据损坏**。EPIC-Fields 只注册了 18.7M / 20M 帧，**未注册帧的位姿是 NULL**（不是 0，也不是插值）。
+- 因此规定：`origin != "measured"` 的通道，数值类规则的 severity **自动降一级**（FAIL → REVIEW），并在 `reason` 里写明降级依据。
+- A/B/C 的 state 全是 `measured`，这条规则在它们身上是恒等变换——**只有 D 能验证它真的生效**。
+
+**5. 源内 capability 不齐，这是 D 最独特、也最难被别的源替代的一点。** IMU 只覆盖 EK-100 扩展部分（EK-55 那批老视频没有）；EPIC-Fields 覆盖 671/700 视频，且**逐帧**仍可能缺失。于是同一个 `source_id` 下，不同 episode 的 `Capabilities` **不相同**。
+
+A/B/C 三个源内部完全齐整，永远测不出这一点。而第 4 节的 schema 早就把 `capabilities_json` 放在 `episodes` 表上（逐 episode）——**D 是唯一能证明这个设计不是摆设的来源**。为此增加一条验收断言：同一 `source_id` 下存在 `capabilities_json` 不同的两条 episode，且质检结论相应不同（一条 `PASS`、一条对应规则 `SKIPPED`）。
+
+**6. 本地镜像的新角色：一致性检验对象，而不是数据来源。**
+
+```json
+"provenance": {
+  "is_original": true,
+  "upstream_revision": "epic-kitchens-100-annotations@<sha>",
+  "timestamp_source": "annotation_seconds",
+  "frame_index_source": "derived_from_seconds@<official_fps>",
+  "signal_origin": {"gyro": "measured", "accel": "measured",
+                    "cam_t": "estimated", "cam_q": "estimated",
+                    "task": "annotated"},
+  "mirrors": [{"kind": "local_transcode", "fps": 30, "resolution": [512, 288],
+               "note": "re-encoded for a prior project; frame indices differ from official"}]
+}
+```
+
+铁律：**秒是权威，帧号是派生**。官方原视频部分 50 fps、部分 59.94 fps，本地镜像是 30 fps——同一个 segment 在两边的帧号不同。只存帧号的话，换副本时全库静默失效。所以派生量必须**随身携带它所依赖的参数**（`derived_from_seconds@<fps>`），否则无从判断是否过期。代价：(a) 启用 `--with-video` + 本地镜像时，画面级结论只对该镜像成立，不可外推到官方视频；(b) 288p 不足以做精细手部/接触判断，本轮不做视觉标签。
+
+**7. 边界与目标：有指令，无评判。** `EpisodeBoundary.termination_source = "annotator"`、`end_reason = "annotation_bound"`、`success = None`。但要注意 **D 的 `None` 与 C 的 `None` 语义不同**：C 是"评判机制存在，但该条未知"，D 是"体系里根本没有评判者"。因此 `EpisodeBoundary` 增加 `success_adjudicator: "simulator" | "policy" | "operator" | "none"`（见 2.2g）——否则下游无法区分"缺标签、可以补标"与"不可能有标签"。
+
+**8. 选样与规模。** 按 participant 分散挑 5~8 个视频，其中**至少 1 个有 IMU、1 个无 IMU**（刻意制造 capability 不齐），每个视频取前 N 个 segment，由 `config/sources.yaml` 的 `max_episodes` 收口。总量几千到一万帧级别——D 的价值是**证明表示层级降级与来源混杂**，不是堆量。
+
+**9. 可用性、许可与隐私。** 官方 annotations 与 EPIC-Fields 可公开下载，许可为 **CC BY-NC 4.0（非商业）**，必须写进 README 与 `sources` 表的 `license` 字段。取用层由 `config/sources.yaml` 的 `layers: [annotations, camera_pose, imu]` 声明；本地镜像的绝对路径只出现在 `config/sources.local.yaml`（gitignore），仓库里是 `${EPIC_KITCHENS_MIRROR}` 占位。**任一层不可用时只降级该层，不让整个 source 失败**——层级可用性走的就是 capability 声明，与 episode 级 capability 是同一套机制，这也是"降级 ≠ 报错"在数据源层面的体现。
 
 ---
 
@@ -107,11 +159,16 @@ Source（数据集级）→ Episode（轨迹级）→ Frame（帧级）
 ```python
 SignalSpec = {                         # action 与 state 共用同一个值对象，见下方「b'」
   "is_command": bool,                  # True=下发的目标值(action)；False=实测回读(state)
+  "level": "per_frame_continuous"      # A/B/C：逐帧定宽数值向量
+         | "per_frame_discrete"        # 逐帧离散（如接触状态）
+         | "episode_label"             # D：整段一个 (verb, noun) 符号标签
+         | "absent",                   # 真的没有
   "space": "joint_position" | "ee_pose_abs" | "ee_pose_delta" | "cartesian_2d"
+           | "camera_pose_abs" | "imu"
            | "mixed" | "none" | "unknown",
                                        # **派生汇总**：物理通道的 space 不唯一时为 mixed；
                                        # unknown：上游语义不明（C 的 state[15]），禁止猜
-  "dim": int,                          # 存储的总列宽
+  "dim": int,                          # 存储的总列宽；level 非 per_frame_* 时恒为 0
   "physical_dim": int,                 # 其中物理通道数（统计/阈值只用这些）
   "channels": [ Channel, ... ],
   "is_delta": bool,                    # **派生汇总**：any(c.is_delta for c in 物理通道)
@@ -123,18 +180,24 @@ Channel = {
           | "control_flag" | "unknown",
   "space": "joint_position" | "ee_translation_abs" | "ee_translation_delta"
            | "ee_rotation_abs" | "ee_rotation_delta" | "cartesian_2d"
+           | "camera_translation_abs" | "camera_rotation_abs"
+           | "imu_angular_velocity" | "imu_linear_acceleration"
            | "gripper" | "flag" | "unknown",  # 语义的唯一真相层（见下方 C 的修正）
+  "origin": "measured" | "estimated" | "interpolated"
+            | "annotated" | "synthesized",  # 这个数是量出来的、算出来的、还是人写的
   "is_delta": bool,                    # 通道级：C 的位姿是增量、夹爪命令是绝对值
-  "frame": "base" | "tool" | "world" | "camera" | None,   # 仅位姿类通道非空
-  "unit": "rad" | "m" | "px" | "normalized" | None,
-  "metric_convertible": bool,          # 能否换算到 SI；pusht 的 px、夹爪归一化开度均为 False
+  "frame": "base" | "tool" | "world" | "camera" | "sensor" | None,  # 仅位姿/惯导类通道非空
+  "unit": "rad" | "m" | "px" | "rad/s" | "m/s^2" | "normalized" | None,
+  "metric_convertible": bool,          # 能否换算到 SI；pusht 的 px、夹爪归一化开度、
+                                       # SfM 重建的相机位移（尺度任意）均为 False
   "arm_id": "left" | "right" | None,
   "is_physical": bool,
   "min": float | None, "max": float | None,
-  "rotation": {                        # 仅 space 以 ee_rotation 开头时非空
+  "rotation": {                        # 仅 space 以 ee_rotation / camera_rotation 开头时非空
       "repr": "axis_angle" | "rotvec" | "euler_xyz" | "euler_zyx"
               | "quat_wxyz" | "unknown",
-      "compose": "pre" | "post" | "unknown",  # 增量旋转的复合顺序：ΔR·R 还是 R·ΔR
+      "compose": "pre" | "post" | "unknown" | None,  # 增量旋转的复合顺序：ΔR·R 还是 R·ΔR；
+                                                    # 绝对旋转（D 的 cam_q）为 None
   } | None,
   "gripper": {                         # 仅 role == "gripper" 时非空
       "convention": "0=closed,1=open",
@@ -162,6 +225,11 @@ StateSpec  = SignalSpec(is_command=False)
 - **`raw_extra` 必须按粒度拆分**（episode 级 vs frame 级，见 2.2d 末尾）——C 未建模的上游字段几乎全是逐 step 的。
 - **`Capabilities.has_video` 必须拆成 `has_rgb` / `has_video`，并补上缺失的 `CameraSpec`**（见 2.2e）——C 的画面内嵌在记录里、且带一路腕部相机。
 
+**两处相对上一版的修正，由来源 D 逼出来**（A/B/C 把语义压到了通道级，D 说明还有两个**正交维度**没被建模）：
+
+- **新增 `SignalSpec.level`（表示层级），这是 schema 里最隐蔽的一个隐含假设。** A/B/C 的 action 全都是"逐帧、定宽、数值向量"，所以此前整个 `SignalSpec` 是围着这个形状长出来的，而这个假设从未被写下来、也从未被检验。D 的 action 是 `(verb, noun) + [t_start, t_end]` 的符号标签——**它不是"没有 action"，是 action 活在另一个层级上**。上一版写 `ActionSpec.space="none"` 把"有信息"记成了"无信息"，比补零更隐蔽，因为补零至少还能从数值分布上看出异常，而 `space="none"` 是一句看起来合理的谎。加了 `level` 之后，`has_action=True` 与 `physical_dim=0` 可以同时成立，质检规则的门控从 `required_capabilities` 扩展为 `required_capabilities + required_level`，`SKIPPED` 的理由也从"没有 action"变成"action 是 episode 级标签"。
+- **新增 `Channel.origin`（信号是量出来的、算出来的、还是人写的）。** A/B/C 的每一个 state 通道都是 `measured`，所以"可信度"这个维度整个不存在。D 的一条 episode 里同时躺着三种来源：IMU 是传感器实测、相机位姿是 COLMAP **估计**（96% 帧注册成功，其余为 NULL）、动作标签是人工**标注**。这直接改变质检语义——SfM 位姿里的一个跳变大概率是重建失败而非数据损坏，按 `measured` 的标准判 FAIL 就是误伤（见第 3 节的 severity 降级规则）。`origin` 放在通道级而不是 episode 级，理由与 `unit` / `gripper` 下沉时完全相同：**同一个向量里就混着两种**。
+
 **b'. `state` 也必须有 spec，不能只有 `action` 有。**
 
 这是初稿最大的结构性缺口，B 让它无法回避：B 的 `observation.state` 与 `action` 是**同一空间、同维、同通道语义**的一对（目标值 vs 实测值），而 C 的 `observation.state[15]` 语义在 dataset card 里都语焉不详。没有 `StateSpec` 会直接导致三件事做不了：
@@ -186,13 +254,14 @@ StateSpec  = SignalSpec(is_command=False)
 
 **d. 无损 / 有损边界（文档要逐项列表）**
 
-| 必须无损                                                          | 可有损                             | 可丢弃                                              |
-| ----------------------------------------------------------------- | ---------------------------------- | --------------------------------------------------- |
-| action / state 原始数值（单位换算是可逆的，记录换算因子）         | 视频（转码、抽帧、只存元信息）     | 上游内部调试字段（如 `frame_index` 冗余列）         |
-| 时间戳、episode 边界、帧序                                        | 图像分辨率                         | 上游的行内 padding / 空 step                        |
-| 任务语言指令原文                                                  | —                                  | 与轨迹无关的 license/readme 文本（存 URI 引用即可） |
-| **逐帧 reward + `terminated`/`truncated` 区分**（见下方修正说明） | 深度图（本轮不处理，只记录存在性） | `discount`、`done` 的冗余镜像列                     |
-| 本体/相机拓扑元信息、`terminate_episode` 等控制标志通道           | —                                  | —                                                   |
+| 必须无损                                                               | 可有损                             | 可丢弃                                              |
+| ---------------------------------------------------------------------- | ---------------------------------- | --------------------------------------------------- |
+| action / state 原始数值（单位换算是可逆的，记录换算因子）              | 视频（转码、抽帧、只存元信息）     | 上游内部调试字段（如 `frame_index` 冗余列）         |
+| 时间戳、episode 边界、帧序                                             | 图像分辨率                         | 上游的行内 padding / 空 step                        |
+| 任务语言指令原文                                                       | —                                  | 与轨迹无关的 license/readme 文本（存 URI 引用即可） |
+| **逐帧 reward + `terminated`/`truncated` 区分**（见下方修正说明）      | 深度图（本轮不处理，只记录存在性） | `discount`、`done` 的冗余镜像列                     |
+| 本体/相机拓扑元信息、`terminate_episode` 等控制标志通道                | —                                  | —                                                   |
+| **标注区间的秒值**（D 的权威时间）、`Channel.origin` / `signal_origin` | 帧号（可由秒 + fps 重算）          | —                                                   |
 
 **关于 reward 的修正（原计划把它划进「可有损」，是错的）**：pusht 的 `next.reward` 是 T 块与目标区域的**多边形重叠率**，而该数据集里根本没有存 T 块位姿（`observation.state` 只有推杆 xy），因此这个数值**丢了就永远算不回来**。行为克隆确实用不到它，但离线 RL（IQL / CQL / Decision Transformer）以它为核心监督信号——入库层无权替下游做这个决定。代价上也不成立：一帧一个 float，全源加起来不过几百 KB。同理，`terminate_episode` 这类控制标志通道若要裁掉，必须写进 `provenance.transforms`（`{"op": "drop_channels", ...}`），不能默默消失。
 
@@ -201,11 +270,13 @@ StateSpec  = SignalSpec(is_command=False)
 **e. 缺模态的优雅降级：capability 声明。**
 
 ```python
-Capabilities = {
+Capabilities = {                        # **逐 episode，不是逐 source**（见下方 D 的说明）
   "has_action": bool, "has_state": bool, "has_gripper": bool,
   "has_rgb": bool,                      # 存在任何 RGB 画面（含 C 的内嵌帧）
   "has_video": bool,                    # 存在**可解码的独立视频文件**（质检规则依赖的是这个）
   "has_language": bool, "has_reward": bool, "has_depth": bool,
+  "has_imu": bool,                      # D 的部分 episode 有、部分没有
+  "has_camera_pose": bool,              # D：EPIC-Fields 重建成功的 episode 才有
   "has_termination_signal": bool,       # 数据里是否存在显式的「结束了」信号
   "is_real_robot": bool, "is_teleop": bool,
 }
@@ -219,7 +290,8 @@ CameraSpec = {                          # episodes.camera_json 的值对象（�
 }
 ```
 
-- 来源 D 是 `has_action=False, has_state=False, has_rgb=True, has_video=True, has_language=True`（verb+noun 就是指令），schema 里 `action` 字段为 NULL（不是 0 向量），`ActionSpec.space="none"`。
+- 来源 D 是 `has_action=True`（但 `ActionSpec.level="episode_label"`，`physical_dim=0`，`frames.parquet` 里**没有** action 列）、`has_language=True`（verb+noun 就是指令）、`has_rgb/has_video` 取决于是否启用 `--with-video`、`has_imu` 与 `has_camera_pose` **逐 episode 不同**。上一版写的 `has_action=False` + `ActionSpec.space="none"` 是错的，理由见 2.2a 的「由来源 D 逼出来的修正」。
+- **`Capabilities` 必须逐 episode 存，这一条只有 D 能证伪。** A/B/C 三个源内部完全齐整，把 capability 挂在 source 上也能跑通，缺陷永远不暴露；D 的 IMU 只覆盖部分视频、EPIC-Fields 只覆盖 671/700 视频，同一个 `source_id` 下必然出现 `capabilities_json` 不同的两条 episode。第 4 节的 schema 本来就把它放在 `episodes` 表上——D 让这个设计从「看起来对」变成「被验证过」。为此增加验收断言：存在同源、不同 capability、且质检结论相应不同（一条 `PASS`、一条对应规则 `SKIPPED`）的两条 episode。
 - **`has_rgb` / `has_video` 必须拆开，`CameraSpec` 必须带 `mount` 与 `encoding`——两条都由来源 C 逼出来**：
   - C 的画面是**内嵌在 TFRecord 记录里的数组**，不是独立 mp4。统一写 `has_video=True` 会让 `VIDEO_FRAME_MISMATCH`（比对 mp4 帧数与 parquet 行数）在一个根本没有 mp4 的来源上启用；拆开后它在 C 上干净地 `SKIPPED`。
   - C 的 `hand_image` 是**腕部相机，跟着夹爪一起动**；A/B 的相机是固定的。“画面剧烈变化”在腕部相机上是正常、在固定相机上是异常，质检不知道 `mount` 就只能二选一地误判；下游训练同样把它当一等区分。
@@ -231,15 +303,20 @@ CameraSpec = {                          # episodes.camera_json 的值对象（�
 
 ```python
 Provenance = {
-  "is_original": bool,                 # 数据是否未经中间处理（D 为 False）
+  "is_original": bool,                 # 数据是否未经中间处理
   "timestamp_source": "real" | "synthesized@<hz>" | "annotation_seconds",
   "frame_index_source": "upstream" | "derived_from_seconds@<fps>",
+  "signal_origin": {channel_name: "measured" | "estimated" | "interpolated"
+                                  | "annotated" | "synthesized"},
   "transforms": [ ... ],               # 转码/降采样等有损变换的记录
+  "mirrors": [ ... ],                  # 同一数据的其他副本及其差异（D 的本地重编码版）
   "upstream_revision": str,
 }
 ```
 
-典型值：A/B = `real` 时间戳；C = `synthesized@5Hz`（RLDS step 里本来就没时间戳）；D = `annotation_seconds` + `derived_from_seconds@30fps`。
+典型值：A/B = `real` 时间戳；C = `synthesized@5Hz`（RLDS step 里本来就没时间戳）；D = `annotation_seconds` + `derived_from_seconds@<official_fps>`。
+
+**`signal_origin` 是相对上一版新增的，由 D 逼出来（与 `Channel.origin` 同源，此处是 episode 级的汇总视图）**：A/B/C 的所有 state 通道都是 `measured`，这个维度整个不存在；D 的一条 episode 里 IMU 是实测、相机位姿是 SfM 估计、动作标签是人工标注。**它必须影响质检的 severity**（见第 3 节）：对 `estimated` 通道按 `measured` 的标准判 FAIL 是系统性误伤，因为 COLMAP 的跳变来自重建失败，不来自数据损坏。
 
 **g. episode 边界：不只记录「在哪结束」，还要记录「谁判定的结束」。**
 
@@ -251,10 +328,14 @@ EpisodeBoundary = {
   "end_reason": "success" | "truncated" | "operator_stop" | "annotation_bound" | "unknown",
   "is_truncated": bool,      # 被步数上限截断：末状态并非终止态
   "success": bool | None,    # None 表示「不知道」，不是 False
+  "success_adjudicator": "simulator" | "policy" | "operator" | "none",
+                             # 谁有资格判定成败；"none" = 体系里根本没有评判者
 }
 ```
 
 典型值：A = `env_rule / success`（覆盖率 > 0.95 由仿真器判定）或 `truncated`；B = `operator / operator_stop`（遥操作者停止录制）；C = `policy_flag`，`is_truncated` 由 `is_last & ~is_terminal` 推出；D = `annotator / annotation_bound`，`success=None`。
+
+**`success_adjudicator` 是相对上一版新增的，由 D 逼出来**：C 的 `success=None` 与 D 的 `success=None` 在 schema 里长得一样，语义却相反——C 是「评判机制存在，但这一条未知」（可以补标），D 是「体系里根本没有评判者」（补不了）。缺了这个字段，下游会把 D 当成「标注不全的数据集」而去尝试补标，或者在统计「成功率」时把 D 的分母算进去。
 
 **`terminated` 与 `truncated` 必须分开存，这是最容易被静默写错的一处**：`is_terminal=True` 表示轨迹真正终止，价值自举必须截断（$V(s_T)=0$）；`is_last=True, is_terminal=False` 表示只是被步数上限切断，末状态仍是普通状态，自举必须继续（$V(s_T) \neq 0$）。压成一个 `done` 布尔会让所有基于该导出的离线 RL 训练**无声地错**。pusht 在 gym 层同样区分 `terminated` / `truncated`，但 LeRobot 的导出可能只保留了 `next.done`——M0 spike 要确认，若确已丢失则登记进已知局限（第 11 节）。
 
@@ -271,7 +352,7 @@ class SourceAdapter(Protocol):
 
 - `LeRobotAdapter`（A/B 复用，靠 `meta/info.json` 驱动通道映射）
 - `RLDSAdapter`（C，用 `tfds` 读；若 TF 依赖太重则退化为直接解析 tfrecord + dataset_info.json，作为备选方案先做技术验证）
-- `EpicKitchensAdapter`（D，本地文件源：读 JSON 标注 + `ffprobe` 视频头，`fetch` 是 no-op，正好验证 port 抽象不依赖网络）
+- `EpicKitchensAdapter`（D，**多层源**：annotations CSV + EPIC-Fields 位姿 JSON + IMU，各层独立可用性→逐 episode 的 `Capabilities`；`--with-video` 时额外读本地镜像的 `ffprobe` 头）
 - 预留 `HDF5Adapter`（robomimic/ALOHA），若 C 的 TFDS 环境搞不定则作为替补上位。
 
 **风险前置**：TFDS/TensorFlow 在 macOS + Python 3.11+ 的安装是本项目最大不确定性，**第 1 天就做 spike 验证**，失败立刻切 HDF5（题目允许换同类型数据集）。
@@ -318,7 +399,7 @@ store/
 
 ## 3. 质检规则（目标 10 条，最低要求 4 条）
 
-每条规则实现为 `QCRule`，声明 `rule_id / severity(FAIL|REVIEW) / required_capabilities / params`，输出 `Verdict(PASS|FAIL|REVIEW|SKIPPED, metrics, reason)`。
+每条规则实现为 `QCRule`，声明 `rule_id / severity(FAIL|REVIEW) / required_capabilities / required_level / params`，输出 `Verdict(PASS|FAIL|REVIEW|SKIPPED, metrics, reason)`。
 
 | ID                         | 规则                                         | 判据（初值，后续按实跑数据调参）                                                                                                                               | 严重度                          | 依赖                                                                 |
 | -------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------- |
@@ -332,12 +413,15 @@ store/
 | `GRIPPER_STUCK`            | 夹爪通道全程无变化（拿放类示教里几乎不可能） | 夹爪通道 unique 值 == 1 且 episode 帧数 > 50                                                                                                                   | REVIEW                          | has_action & has_gripper                                             |
 | `TERMINATION_CONSISTENCY`  | 结束信号与声明的判定方不一致                 | `policy_flag` 源：标志必须全程为 0、且恰好在末帧为 1；`env_rule` 源：`done` 只能出现在末帧。中间帧出现结束信号 = episode 被错误拼接；末帧没有 = 被截断但未标记 | FAIL / REVIEW                   | has_termination_signal                                               |
 | `SEGMENT_BOUNDS`（D 专用） | 标注区间越界 / 重叠 / 过短                   | `end > video_duration`、`start >= end`、时长 < 0.4s（<12 帧）、与相邻 segment 重叠 > 50%                                                                       | FAIL / REVIEW                   | 标注型 source                                                        |
+| `POSE_COVERAGE`（D 专用）  | SfM 重建的位姿覆盖率过低 / 存在长空洞        | 本 segment 内 `cam_t` 非 NULL 帧占比 < 80%，或存在连续 > 0.5s 的未注册段                                                                                       | REVIEW                          | has_camera_pose                                                      |
 
 设计要点：
 
 - **`STATE_ACTION_ECHO` 是一个真陷阱，必须写进文档**：ALOHA（来源 B）是**关节位置控制的遥操示教**，action 就是下一刻的目标关节角，`corr(a_t, s_t)` 天然 > 0.999——按相关性判会把整个数据集全部误判。真正的异常信号是**位级相等**（真实伺服总有跟踪误差，不可能 bit-identical），以及 `lag-1 互信息` 降为 0（action 完全不领先于 state）。先跑一轮统计把 `max abs(a-s)` 的分布画出来再定阈值。启用条件不得靠“列宽相等”猜，而是显式判 `action_spec.space == state_spec.space and action_spec.dim == state_spec.dim`（这就是 2.2b' 引入 `StateSpec` 的直接原因）；C 的 `state.space == "unknown"` 因此干净地 `SKIPPED`。
 - **时间戳类规则需要 `timestamp_source` 而不只是 capability**：RLDS（来源 C）的 step 里**根本没有时间戳**，时间是由 step index / 声明控制频率合成的。对合成时间戳跑 `TS_MONOTONIC` 永远 PASS，是无意义的假阳性——所以结论必须是 `SKIPPED(reason=synthetic_timestamp)`。这一条是“降级 ≠ 通过”的第二个典型例子。
 - **非物理通道必须从数值类规则里排除，这是第三个假阳性陷阱**：C 的 `terminate_episode` 在末帧从 0 跳到 1，幅度比该“通道”平时的 p99.9 大几个量级——若不按 `is_physical` 过滤，**每一条 C 的 episode 都会被 `ACTION_JERK` 判成 REVIEW**，且它的“限位”是 $\{0,1\}$ 而不是 ±0.1m，`ACTION_RANGE` 按物理限位判也没意义。因此阈值与统计一律按 `role` 分桶，而不是按列序号。
+- **门控不能只看 capability，还得看 `level`，这是第四个陷阱（由 D 逼出）**：D 的 `has_action=True`，但它的 action 是 `episode_label`——只看 capability 的话，`ACTION_RANGE` / `ACTION_JERK` / `GRIPPER_STUCK` 会在一个根本没有逐帧数值列的来源上启用，然后以 KeyError 或空数组告终。正确做法是声明 `required_level={"action": "per_frame_continuous"}`，在 D 上得到 `SKIPPED(reason=action_level_is_episode_label)`。注意这个理由与“没有 action”是**不同的结论**，报告里必须能分开统计：前者意味着“换一种规则就能检”（比如检标签合法性），后者意味着“无物可检”。
+- **`origin != "measured"` 的通道，severity 自动降一级（FAIL → REVIEW），这是第五个陷阱（也由 D 逼出）**：D 的相机位姿是 COLMAP 重建的产物，它里的一个跳变大概率是**重建失败**，不是数据损坏；把它当 `measured` 判 FAIL，等于拿模型误差去否定数据。降级由**领域层统一施加**（见 8.4 不变量 13），规则实现无权绕过，且 `reason` 里必须写明降级依据，否则报告里会出现一批无法解释的 REVIEW。A/B/C 的 state 全是 `measured`，这条规则在它们身上是恒等变换——**只有 D 能验证它真的生效**。
 - **`TERMINATION_CONSISTENCY` 能抓到其他九条看不见的错**：归一化时把两条 episode 错接成一条（中间帧出现结束信号）、或一条被截成两半（末帧无结束信号）。B/D 没有显式结束信号，`has_termination_signal=False` → 干净地 `SKIPPED`，又一个降级路径的实例。
 - 阈值全部走 `config/qc.yaml`，且**先跑一轮统计再定阈值**（数据驱动，不是拍脑袋——这一步的对话记录本身就是 AI 使用的证据）。
 - 每条规则输出**数值 metrics**（不只是布尔），存进 `qc_results`，报告里的命中率与分布直接从这里算。
@@ -386,7 +470,7 @@ DISCOVERED → FETCHED → NORMALIZED → QC_DONE → COMMITTED
 
 ## 5. 增量与断点恢复
 
-**幂等键**：`(source_id, upstream_id)` 唯一；`content_hash` 用于识别"上游改过"。A/B/D 的 `upstream_id` 有天然载体（`episode_000042.parquet` / `P01_01#0042`），`content_hash` 取上游文件 sha256（或 size+mtime+revision 的组合摘要）即可。
+**幂等键**：`(source_id, upstream_id)` 唯一；`content_hash` 用于识别"上游改过"。A/B/D 的 `upstream_id` 有天然载体（`episode_000042.parquet` / D 的官方 `narration_id` 如 `P01_01_16`），`content_hash` 取上游文件 sha256（或 size+mtime+revision 的组合摘要）即可。D 的多层结构要注意：`content_hash` 必须覆盖**所有已启用层**（annotations + 位姿 + IMU），否则“后来补下了 EPIC-Fields”这种变更会被误认为无变化而跳过。
 
 **C（RLDS）是唯一没有稳定上游 ID 的来源，必须单独处理**：一个 TFRecord shard 里装着**很多条** episode，episode 的唯一身份只有“它在 shard 里的序号”。按 shard 文件做 hash 会让同一 shard 内所有 episode 共享一个 hash；上游一旦重新分片，所有序号平移、`upstream_id` 集体失效——第二轮会把整批老数据当成新增。这直接打在验收项“再跑一轮识别无新增”上，所以不是细节：
 
@@ -466,7 +550,7 @@ CLI：`rdp export --budget 50000 --strategy balanced --out exports/subset.jsonl`
 | **Source**           | 一个上游数据集（含 revision）                                 | `domain/source.py`                     |
 | **Episode**          | 一条完整示教/操作片段，**聚合根**                             | `domain/episode.py`                    |
 | **Frame**            | episode 内一帧低维信号                                        | 帧数据不是实体，是 `FrameTable` 值对象 |
-| **Embodiment**       | 本体（aloha_bimanual / ur5 / pusht_planar / human_hand）      | `domain/embodiment.py`                 |
+| **Embodiment**       | 本体（aloha_bimanual / ur5 / pusht_planar / human_ego）       | `domain/embodiment.py`                 |
 | **ActionSpec**       | 动作空间的结构化描述（值对象，不可变）                        | `domain/action_spec.py`                |
 | **StateSpec**        | 状态空间的结构化描述，与 ActionSpec 共用 `SignalSpec` 值对象  | `domain/action_spec.py`                |
 | **Capabilities**     | 该 episode 拥有哪些模态（值对象）                             | `domain/capabilities.py`               |
@@ -573,7 +657,7 @@ class FaultInjector(Protocol):                          # 生产实现是 no-op
 
 1. `IngestionStage.advance()` 只允许 `DISCOVERED → FETCHED → NORMALIZED → QC_DONE → COMMITTED`，跳级或回退必须显式调用 `reset_to()` 并带原因。
 2. `CanonicalEpisode` 一旦构造完成即不可变；`SignalSpec.dim == len(channels) == 对应列宽`（action 与 state 各自校验），构造时校验，违反直接抛领域异常。
-3. `Capabilities.has_action == False` ⟹ `ActionSpec.space == NONE` 且 frames 中 action 列为 NULL（禁止 0 填充）；`has_state == False` 对 `StateSpec` 同理。
+3. `SignalSpec.level == "absent"` ⟺ `Capabilities.has_* == False`；`level == "episode_label"` ⟹ `dim == 0` 且 `frames.parquet` 里**不得存在**对应列（不是全 NULL 的列，是没有这一列）；`level` 为逐帧类型且某帧无值时只能写 NULL（**禁止 0 填充**，D 的未注册帧位姿适用此条）。action 与 state 各自校验。
 4. QCRule 的 `required_capabilities` 不满足 ⟹ 结论只能是 `SKIPPED`，领域层强制，规则实现无法绕过。
 5. `SubsetPlan` 总帧数 ≤ 预算，且每个条目的 `frame_range` 必须落在该 episode 的实际帧数内。
 6. `SignalSpec.physical_dim == len([c for c in channels if c.is_physical])`；且任何跨通道统计（限位/jerk/行程）只能在物理通道子集上计算——由领域层的 `physical_view()` 统一提供，规则拿不到完整向量，从机制上无法误用。
@@ -583,6 +667,9 @@ class FaultInjector(Protocol):                          # 生产实现是 no-op
 10. `channel.space` 以 `ee_rotation` 开头 ⟺ `channel.rotation` 非空；`repr` 可以是 `"unknown"`，但字段不得缺席。
 11. `Capabilities.has_video == True` ⟹ 至少一个 `CameraSpec.encoding == "mp4_sidecar"`；`inline_frames` 只能置 `has_rgb`。依赖 `has_video` 的规则因此在 C 上自动 `SKIPPED`。
 12. 写入 `frames.parquet` 的未建模上游列必须带 `raw.` 前缀且全部登记在 `raw_frame_columns`；任何无前缀、未登记的列 = 领域异常（防止 schema 漂移惄惄发生）。
+13. `Channel.origin != "measured"` ⟹ 数值类规则在该通道上的 severity 自动降一级（FAIL → REVIEW），且 `Verdict.reason` 必须包含降级依据。降级由领域层施加，规则实现无法绕过——同不变量 4。
+14. `EpisodeBoundary.success_adjudicator == "none"` ⟹ `success is None`；反之不成立（C 是 `policy` + `None`）。任何「成功率」聚合必须排除 `success_adjudicator == "none"` 的 episode，而不是把它们算进分母。
+15. 派生量必须携带其所依赖的参数：`frame_index_source` 必须形如 `derived_from_seconds@<fps>`，只写 `derived` 不合法——否则无从判断副本更换后帧号是否过期。
 
 这些不变量全部有对应的单元测试，先写测试再写实现。
 
@@ -634,17 +721,17 @@ class FaultInjector(Protocol):                          # 生产实现是 no-op
 
 每个里程碑对应若干次 commit，且与 AI 对话记录时间线对齐。
 
-| 阶段                        | 产出                                                                             | 关键风险                                                  |
-| --------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| M0 数据可达性 spike         | A/B/C 各拉通 1 个 episode、D 用 ffprobe 读通 1 个视频；确认 TFDS 是否可用        | TFDS 装不上 → 切 HDF5                                     |
-| M1 通用语言 + domain 模型   | `domain/` 全部值对象与不变量 + **对应单元测试（先写测试）**；design 初稿         | 设计返工，先用 AI 交叉评审再写代码                        |
-| M2 端口 + 状态机 + 恢复用例 | `ports.py`、`IngestionStage`、`recover_incomplete`；**先写恢复的验收测试（红）** | 事务边界写错                                              |
-| M3 SQLite/Parquet 基础设施  | 让 M2 的红测试变绿：真仓储、原子写、UnitOfWork                                   | fsync/rename 细节                                         |
-| M4 三个 adapter             | 归一化跑通，产出 normalized parquet；特征化测试锁通道映射                        | 通道语义映射错                                            |
-| M5 QC 规则                  | 10 条规则（每条先写坏数据测试）+ 先统计后定阈值                                  | 阈值过松/过紧、ALOHA 的 echo 假阳性、控制标志通道误入统计 |
-| M6 真 kill 验收             | `demo_crash_resume.sh` + 真子进程验收测试                                        | 与 fake 层结论不一致                                      |
-| M7 导出 + 报告              | JSONL 子集、run/cumulative 报告                                                  | —                                                         |
-| M8 文档与收尾               | design.md 全部问题、扩展问题、已知局限、AI 记录整理                              | 文档与代码对不上（专门用一次 AI 做对齐检查）              |
+| 阶段                        | 产出                                                                                                                           | 关键风险                                                        |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| M0 数据可达性 spike         | A/B/C 各拉通 1 个 episode；D 拉通 annotations + 1 个视频的 EPIC-Fields 位姿 + IMU（**实测确认 IMU 单位**）；确认 TFDS 是否可用 | TFDS 装不上 → 切 HDF5；EPIC-Fields 位姿格式与帧号对齐方式需实测 |
+| M1 通用语言 + domain 模型   | `domain/` 全部值对象与不变量 + **对应单元测试（先写测试）**；design 初稿                                                       | 设计返工，先用 AI 交叉评审再写代码                              |
+| M2 端口 + 状态机 + 恢复用例 | `ports.py`、`IngestionStage`、`recover_incomplete`；**先写恢复的验收测试（红）**                                               | 事务边界写错                                                    |
+| M3 SQLite/Parquet 基础设施  | 让 M2 的红测试变绿：真仓储、原子写、UnitOfWork                                                                                 | fsync/rename 细节                                               |
+| M4 三个 adapter             | 归一化跑通，产出 normalized parquet；特征化测试锁通道映射                                                                      | 通道语义映射错                                                  |
+| M5 QC 规则                  | 10 条规则（每条先写坏数据测试）+ 先统计后定阈值                                                                                | 阈值过松/过紧、ALOHA 的 echo 假阳性、控制标志通道误入统计       |
+| M6 真 kill 验收             | `demo_crash_resume.sh` + 真子进程验收测试                                                                                      | 与 fake 层结论不一致                                            |
+| M7 导出 + 报告              | JSONL 子集、run/cumulative 报告                                                                                                | —                                                               |
+| M8 文档与收尾               | design.md 全部问题、扩展问题、已知局限、AI 记录整理                                                                            | 文档与代码对不上（专门用一次 AI 做对齐检查）                    |
 
 ---
 
@@ -658,6 +745,7 @@ class FaultInjector(Protocol):                          # 生产实现是 no-op
 - **验收阶段**：让 AI 做非代码活：文档与代码一致性检查、**本地路径/密钥泄露扫描**、错样分析（把 FAIL 的 episode metrics 丢给 AI 让它判断是真坏还是规则误伤）。
 - **数据驱动调整**：QC 阈值必须基于实跑统计让 AI 给改法，把"改前/改后命中率"记进对话记录。
 - **主动拒绝记录**：单独维护 `docs/ai/rejected.md`，记录"AI 建议 X / 我改成 Y / 因为 Z"。已预判会拒绝的：把所有本体硬压成统一 32 维向量、引入 ORM/Airflow/Ray 这类过度设计、入库阶段就做 min-max 归一化、用多进程并发换取那点吞吐，以及 8.6 节列出的整套 DDD/Clean Architecture 仪式（事件总线、CQRS、Factory 层）。
+- **已发生的两次自我纠错（写进 `rejected.md`，它们比拒绝 AI 建议更有价值）**：（1）把 D 写成“无 action、无 state”——实际上 EPIC-KITCHENS 生态有 IMU、EPIC-Fields 位姿、VISOR 掩膜与 5 个官方 challenge，D 的 action 只是**表示层级不同**；（2）把本地重编码副本当权威数据源——正确做法是官方发布为权威、本地件降级为镜像。两条都是“不熟悉数据源就写 schema”造成的，也都是靠**查证上游官方文档**而不是靠推理修正的。
 
 Commit 纪律：小步提交、message 说明"做了什么 + 为什么"，节奏与对话时间线一致。
 
@@ -683,8 +771,11 @@ Commit 纪律：小步提交、message 说明"做了什么 + 为什么"，节奏
 - 不做跨本体的动作空间统一 → 下游若需要单一向量输入，需自行加投影层（这是有意的取舍）。
 - 单机单进程，吞吐不是本轮目标。
 - OXE 只取一个小 sub-dataset，不代表整个 OXE 的多样性。
-- **来源 D 依赖本地已有副本**（30 GB，不进 git），评审方没有该数据时会自动跳过；且该副本是 512×288 / 30fps 的**重编码版**，与官方原始视频不同，视觉侧结论不可外推。
-- D 只用于验证降级路径，样本量小、无 action，不进入训练子集默认配额。
+- **来源 D 按层取用，本轮不取 VISOR（手-物掩膜与接触关系）与 EPIC-SOUNDS（音频事件）**；因此 D 的“接触/抓放”语义目前无法与机器人的夹爪通道对齐。这是工期取舍，不是架构限制——`layers` 配置已预留接缝。
+- **D 的相机位姿是 SfM 估计结果，尺度任意**（`metric_convertible=false`），且只覆盖 671/700 视频、逐帧仍可能缺失；基于它的任何距离/速度结论都是相对量。
+- **D 的官方视频默认不下载**（百 GB 量级）；`--with-video` 走本地镜像时，该镜像是 512×288 / 30fps 的**重编码版**，与官方原始视频（1080p @ 50/59.94fps）不同，视觉侧结论不可外推，且帧号必须按镜像 fps 重算。
+- **D 的许可是 CC BY-NC 4.0（非商业）**，与 A/B/C 不同；导出子集若混入 D ，整个子集的使用受此约束。`sources.license` 字段与导出行都要带上这一信息。
+- D 的 action 是 `episode_label` 层级，不可直接用于行为克隆；本轮不进入训练子集默认配额，它的价值在于验证**表示层级降级、信号来源混杂、源内 capability 不齐**三条路径。
 - **`terminated` / `truncated` 的区分可能在上游就已丢失**：LeRobot 导出的 A/B 只有 `next.done`，若 M0 确认无法区分“达成目标”与“被步数上限切断”，则 `EpisodeBoundary.is_truncated` 对 A/B 只能填 `unknown`，该子集不适合直接用于离线 RL。
 
 ---
@@ -881,59 +972,133 @@ observation.state = [-0.010, -0.95, 1.10, ..., 0.019, ...]   # 实测关节角(r
 
 10. **它是唯一没有稳定上游 episode ID 的来源**：一个 shard 装多条 episode，身份只有 shard 内序号。`upstream_id = f"{split}/{shard}#{i}"`，`content_hash` 必须算在**归一化后的 episode 字节**上而不是 shard 文件上，否则上游一重新分片就会把整批老数据误识为新增——直接打在验收项上，详见第 5 节。
 
-### D. EPIC-KITCHENS-100（本地）—— 无 action、无 state 的人类第一视角
+### D. EPIC-KITCHENS-100（官方发布）—— action 存在但**表示层级不同**的人类第一视角
 
-结构与决策见 1.1 节，进到统一 schema 后长这样：
+结构与决策见 1.1 节。它在四源里承担三件别处测不到的事：**表示层级降级**（action 是 episode 级符号标签）、**信号来源混杂**（实测 / SfM 估计 / 人工标注同处一条 episode）、**源内 capability 不齐**。进到统一 schema 后长这样：
 
 ```json
 {
-  "episode_uid": "epic100:P01_01#0000",
-  "embodiment": "human_hand",
+  "episode_uid": "epic100:P01_01_16",
+  "embodiment": "human_ego",
   "task": "open door",
   "time_range_s": [0.14, 3.37],
-  "frame_range": [4, 101],
-  "n_frames": 98,
-  "fps_nominal": 30.0,
-  "fps_effective": 30.0,
-  "action_spec": { "space": "none", "dim": 0, "channels": [] },
+  "frame_range": [7, 168],
+  "n_frames": 162,
+  "fps_nominal": 50.0,
+  "fps_effective": 50.0,
+  "action_spec": {
+    "level": "episode_label",
+    "space": "none",
+    "dim": 0,
+    "physical_dim": 0,
+    "channels": []
+  },
+  "state_spec": {
+    "level": "per_frame_continuous",
+    "space": "mixed",
+    "dim": 13,
+    "physical_dim": 13,
+    "channels": [
+      {
+        "name": "gyro.x",
+        "role": "head",
+        "space": "imu_angular_velocity",
+        "origin": "measured",
+        "unit": "rad/s",
+        "metric_convertible": true,
+        "frame": "sensor",
+        "is_physical": true
+      },
+      {
+        "name": "accel.x",
+        "role": "head",
+        "space": "imu_linear_acceleration",
+        "origin": "measured",
+        "unit": "m/s^2",
+        "metric_convertible": true,
+        "frame": "sensor",
+        "is_physical": true
+      },
+      {
+        "name": "cam_t.x",
+        "role": "head",
+        "space": "camera_translation_abs",
+        "origin": "estimated",
+        "unit": null,
+        "metric_convertible": false,
+        "frame": "world",
+        "is_physical": true
+      },
+      {
+        "name": "cam_q.w",
+        "role": "head",
+        "space": "camera_rotation_abs",
+        "origin": "estimated",
+        "unit": null,
+        "metric_convertible": false,
+        "frame": "world",
+        "is_physical": true,
+        "rotation": { "repr": "quat_wxyz", "compose": null }
+      }
+    ]
+  },
   "capabilities": {
-    "has_action": false,
-    "has_state": false,
-    "has_rgb": true,
-    "has_video": true,
+    "has_action": true,
+    "has_state": true,
+    "has_imu": true,
+    "has_camera_pose": true,
+    "has_rgb": false,
+    "has_video": false,
     "has_language": true,
+    "has_gripper": false,
     "is_real_robot": false
   },
   "provenance": {
-    "is_original": false,
+    "is_original": true,
+    "upstream_revision": "epic-kitchens-100-annotations@<sha>",
     "timestamp_source": "annotation_seconds",
-    "frame_index_source": "derived_from_seconds@30fps"
+    "frame_index_source": "derived_from_seconds@50fps",
+    "signal_origin": {
+      "gyro": "measured",
+      "accel": "measured",
+      "cam_t": "estimated",
+      "cam_q": "estimated",
+      "task": "annotated"
+    }
   },
   "boundary": {
     "termination_source": "annotator",
     "end_reason": "annotation_bound",
     "is_truncated": false,
-    "success": null
+    "success": null,
+    "success_adjudicator": "none"
   }
 }
 ```
 
+对照着看**同一 source 里的另一条 episode**（老视频、无 IMU、SfM 重建失败）：`has_imu=false`、`has_camera_pose=false`、`state_spec.level="absent"`。两条 episode 同源、同 adapter、`capabilities_json` 却不同——这就是 1.1 第 5 点那条验收断言的对象。
+
 ### 四源横向对照（这张表就是"为什么不能压成一个向量"的论据）
 
-| 维度        | A pusht                   | B aloha          | C ur5 (RLDS)                              | D epic100         |
-| ----------- | ------------------------- | ---------------- | ----------------------------------------- | ----------------- |
-| 存储        | Parquet + MP4             | Parquet + MP4    | TFRecord 嵌套                             | MP4 + JSON 标注   |
-| 本体        | 平面推杆                  | 双臂 6+1 ×2      | 单臂 UR5                                  | 人手              |
-| action 空间 | 任务空间绝对 xy           | 关节空间绝对角   | 末端增量位姿                              | 无                |
-| 维度        | 2                         | 14               | 10（7 物理 + 3 控制标志）                 | 0                 |
-| 单位        | **像素**                  | rad + 归一化开度 | m + rad                                   | —                 |
-| 是否增量    | 否                        | 否               | **位姿是 / 夹爪否（同一向量内混）**       | —                 |
-| 时间戳      | 真实                      | 真实             | **无（需合成）**                          | 标注秒 → 派生帧号 |
-| 帧率        | 10 Hz                     | 50 Hz            | ~5 Hz                                     | 30 fps            |
-| 相机        | 1（96×96）                | 1~4（640×480）   | 2（static + **wrist**），**内嵌帧无 mp4** | 1（512×288）      |
-| 真机/仿真   | 仿真                      | 仿真             | 真机                                      | 真人              |
-| 语言指令    | 有（单一任务）            | 有（单一任务）   | 有（逐 step）                             | verb+noun 合成    |
-| 夹爪        | 无                        | 连续开度 ×2      | ±1 二值                                   | 无                |
-| 终止判定    | 环境规则（coverage>0.95） | 操作者停止录制   | **策略输出 `terminate_episode`**          | 标注员事后画区间  |
+| 维度        | A pusht                   | B aloha          | C ur5 (RLDS)                              | D epic100                                    |
+| ----------- | ------------------------- | ---------------- | ----------------------------------------- | -------------------------------------------- |
+| 存储        | Parquet + MP4             | Parquet + MP4    | TFRecord 嵌套                             | CSV 标注 + JSON 位姿 + IMU + MP4             |
+| 本体        | 平面推杆                  | 双臂 6+1 ×2      | 单臂 UR5                                  | 人手 / 头戴相机                              |
+| action 层级 | 逐帧连续                  | 逐帧连续         | 逐帧连续                                  | **episode 级符号标签**                       |
+| action 空间 | 任务空间绝对 xy           | 关节空间绝对角   | 末端增量位姿                              | (verb, noun) + 时间区间                      |
+| action 维度 | 2                         | 14               | 10（7 物理 + 3 控制标志）                 | 0（无逐帧列）                                |
+| state 维度  | 2                         | 14               | 15（语义不明）                            | 13（IMU 6 + 相机位姿 7）                     |
+| 单位        | **像素**                  | rad + 归一化开度 | m + rad                                   | rad/s + m/s² + **无尺度位姿**                |
+| 信号来源    | 实测                      | 实测             | 实测                                      | **实测 / SfM 估计 / 人工标注 三种混合**      |
+| 是否增量    | 否                        | 否               | **位姿是 / 夹爪否（同一向量内混）**       | 否                                           |
+| 时间戳      | 真实                      | 真实             | **无（需合成）**                          | 标注秒 → 派生帧号                            |
+| 帧率        | 10 Hz                     | 50 Hz            | ~5 Hz                                     | 事件 ~0.3 Hz；IMU ~200 Hz；视频 50/59.94 fps |
+| 相机        | 1（96×96）                | 1~4（640×480）   | 2（static + **wrist**），**内嵌帧无 mp4** | 1（head，默认不取）                          |
+| 真机/仿真   | 仿真                      | 仿真             | 真机                                      | 真人                                         |
+| 语言指令    | 有（单一任务）            | 有（单一任务）   | 有（逐 step）                             | verb+noun 合成 + narration 原文              |
+| 夹爪        | 无                        | 连续开度 ×2      | ±1 二值                                   | 无                                           |
+| 终止判定    | 环境规则（coverage>0.95） | 操作者停止录制   | **策略输出 `terminate_episode`**          | 标注员事后画区间                             |
+| 成败评判者  | 仿真器                    | 操作者           | 策略                                      | **无（不是未知，是不存在）**                 |
+| 源内一致性  | 齐整                      | 齐整             | 齐整                                      | **capability 逐 episode 不同**               |
 
-**结论**：能被真正统一的只有**结构**（episode/frame 的组织方式、通道级元信息、能力声明、provenance），**不是数值**。这就是第 2 节那套 schema 的全部立论依据。
+**结论**：能被真正统一的只有**结构**（episode/frame 的组织方式、通道级元信息、能力声明、provenance），**不是数值**。这就是第 2 节那套 schema 的全部立论依据。而最后三行是 D 加入后才出现的：**表示层级、信号可信度、源内一致性这三个维度，在只看 A/B/C 时是隐形的**——因为它们在三个机器人数据集上取值恒定，于是容易被当成“不需要建模”。
