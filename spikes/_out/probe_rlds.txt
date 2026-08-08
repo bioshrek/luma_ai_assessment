@@ -1,0 +1,164 @@
+ERROR:absl:Detected incompatible Protobuf Gencode/Runtime versions when loading tensorflow_metadata/proto/v0/anomalies.proto: gencode 6.31.1 runtime 5.29.6. Runtime version cannot be older than the linked gencode version. See Protobuf version guarantees at https://protobuf.dev/support/cross-version-runtime-guarantee.
+Traceback (most recent call last):
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/__init__.py", line 79, in <module>
+    from tensorflow_datasets import rlds  # pylint: disable=g-bad-import-order
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/rlds/__init__.py", line 21, in <module>
+    from tensorflow_datasets.rlds import envlogger_reader
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/rlds/envlogger_reader.py", line 21, in <module>
+    from tensorflow_datasets.core.utils.lazy_imports_utils import tree
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/__init__.py", line 21, in <module>
+    from tensorflow_datasets.core import community
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/community/__init__.py", line 19, in <module>
+    from tensorflow_datasets.core.community.huggingface_wrapper import mock_builtin_to_use_gfile
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/community/huggingface_wrapper.py", line 32, in <module>
+    from tensorflow_datasets.core import dataset_builder
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/dataset_builder.py", line 162, in <module>
+    class DatasetBuilder(registered.RegisteredDataset):
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/etils/epy/lazy_imports_utils.py", line 123, in __getattr__
+    return getattr(self._module, name)
+                   ^^^^^^^^^^^^
+  File "/Users/wanghuan/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/functools.py", line 998, in __get__
+    val = self.func(instance)
+          ^^^^^^^^^^^^^^^^^^^
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/etils/epy/lazy_imports_utils.py", line 84, in _module
+    module = importlib.import_module(self.module_name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wanghuan/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/registered.py", line 36, in <module>
+    import tensorflow_datasets.core.logging as _tfds_logging
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/logging/__init__.py", line 29, in <module>
+    from tensorflow_datasets.core.logging import logging_logger
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/logging/logging_logger.py", line 21, in <module>
+    from tensorflow_datasets.core import decode
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/decode/__init__.py", line 22, in <module>
+    from tensorflow_datasets.core.decode.partial_decode import PartialDecoding
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/decode/partial_decode.py", line 21, in <module>
+    from tensorflow_datasets.core import features as features_lib
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/features/__init__.py", line 22, in <module>
+    from tensorflow_datasets.core.features.audio_feature import Audio
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/features/audio_feature.py", line 33, in <module>
+    from tensorflow_datasets.core.features import feature as feature_lib
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/features/feature.py", line 36, in <module>
+    from tensorflow_datasets.core.proto import feature_pb2
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/proto/__init__.py", line 18, in <module>
+    from tensorflow_datasets.core.proto import dataset_info_generated_pb2 as dataset_info_pb2  # pylint: disable=line-too-long
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_datasets/core/proto/dataset_info_generated_pb2.py", line 32, in <module>
+    from tensorflow_metadata.proto.v0 import schema_pb2 as tensorflow__metadata_dot_proto_dot_v0_dot_schema__pb2
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_metadata/proto/__init__.py", line 16, in <module>
+    from tensorflow_metadata.proto.v0 import (
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/tensorflow_metadata/proto/v0/anomalies_pb2.py", line 12, in <module>
+    _runtime_version.ValidateProtobufRuntimeVersion(
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/google/protobuf/runtime_version.py", line 100, in ValidateProtobufRuntimeVersion
+    _ReportVersionError(
+  File "/Users/wanghuan/Documents/py_repos/luma_ai_assessment/.venv/lib/python3.12/site-packages/google/protobuf/runtime_version.py", line 50, in _ReportVersionError
+    raise VersionError(msg)
+google.protobuf.runtime_version.VersionError: Detected incompatible Protobuf Gencode/Runtime versions when loading tensorflow_metadata/proto/v0/anomalies.proto: gencode 6.31.1 runtime 5.29.6. Runtime version cannot be older than the linked gencode version. See Protobuf version guarantees at https://protobuf.dev/support/cross-version-runtime-guarantee.
+
+==============================================================================
+environment / TFDS decision
+==============================================================================
+  python = 3.12.11
+  tensorflow_datasets UNUSABLE: AttributeError: module 'tensorflow_datasets' has no attribute 'features'
+  -> using the pre-authorised fallback: direct TFRecord parsing, no TensorFlow
+
+==============================================================================
+berkeley_autolab_ur5/0.1.0 — dataset_info.json
+==============================================================================
+  name         = 'berkeley_autolab_ur5'
+  version      = '0.1.0'
+  fileFormat   = 'tfrecord'
+  description  = 'UR5 performing cloth manipulation, pick place etc tasks'
+  split 'train': episodes=896 shards=412 episodes_in_shard_0=3
+  split 'test': episodes=104 shards=50 episodes_in_shard_0=2
+  NOTE: identity is (split, shard, index-in-shard) only — no stable upstream id.
+
+==============================================================================
+features.json — the authoritative channel semantics
+==============================================================================
+  steps: SEQUENCE (RLDS steps)
+    steps/is_last                                dtype=bool       shape=[]
+    steps/reward                                 dtype=float32    shape=[]
+    steps/is_first                               dtype=bool       shape=[]
+    steps/action/gripper_closedness_action       dtype=float32    shape=[]
+                                                 desc: 1 if close gripper, -1 if open gripper, 0 if no change.
+    steps/action/rotation_delta                  dtype=float32    shape=['3']
+                                                 desc: Delta change in roll, pitch, yaw.
+    steps/action/terminate_episode               dtype=float32    shape=[]
+    steps/action/world_vector                    dtype=float32    shape=['3']
+                                                 desc: Delta change in XYZ.
+    steps/observation/natural_language_embedding dtype=float32    shape=['512']
+    steps/observation/image                      dtype=uint8      shape=['480', '640', '3']
+    steps/observation/hand_image                 dtype=uint8      shape=['480', '640', '3']
+    steps/observation/natural_language_instruction dtype=string     shape=[]
+    steps/observation/image_with_depth           dtype=float32    shape=['480', '640', '1']
+    steps/observation/robot_state                dtype=float32    shape=['15']
+                                                 desc: Explanation of the robot state can be found at https://sites.google.com/corp/view/berkeley-ur5
+    steps/is_terminal                            dtype=bool       shape=[]
+
+==============================================================================
+first shard — decode episode 0 by direct TFRecord parsing
+==============================================================================
+  cached: berkeley_autolab_ur5-train.tfrecord-00000-of-00412 (150.0 MB)
+  episode 0 record size = 54.85 MB
+  flattened feature keys (14):
+    steps/action/gripper_closedness_action       kind=float  len=71
+    steps/action/rotation_delta                  kind=float  len=213
+    steps/action/terminate_episode               kind=float  len=71
+    steps/action/world_vector                    kind=float  len=213
+    steps/is_first                               kind=int64  len=71
+    steps/is_last                                kind=int64  len=71
+    steps/is_terminal                            kind=int64  len=71
+    steps/observation/hand_image                 kind=bytes  len=71
+    steps/observation/image                      kind=bytes  len=71
+    steps/observation/image_with_depth           kind=bytes  len=71
+    steps/observation/natural_language_embedding kind=float  len=36352
+    steps/observation/natural_language_instruction kind=bytes  len=71
+    steps/observation/robot_state                kind=float  len=1065
+    steps/reward                                 kind=float  len=71
+
+  candidate step counts (non-float step features): [71]
+
+  -- per-step numeric channels --
+    steps/action/gripper_closedness_action       shape=(71, 1)
+      step0=[0.0]
+      step1=[0.0]
+      last =[0.0]
+      |v| p50=0.00000 p99=0.00000 max=0.00000
+    steps/action/rotation_delta                  shape=(71, 3)
+      step0=[-0.0003800000122282654, 0.0, 0.0005699999746866524]
+      step1=[-0.0011399999493733048, 0.0, 0.015809999778866768]
+      last =[0.0, 0.0, 0.0]
+      |v| p50=0.00267 p99=0.02725 max=0.03010
+    steps/action/terminate_episode               shape=(71, 1)
+      step0=[0.0]
+      step1=[0.0]
+      last =[1.0]
+      |v| p50=0.00000 p99=1.00000 max=1.00000
+    steps/action/world_vector                    shape=(71, 3)
+      step0=[-0.0022899999748915434, 0.00686000008136034, 0.003539999946951866]
+      step1=[-0.00953999999910593, 0.011490000411868095, 0.005090000107884407]
+      last =[0.0, 0.0, 0.0]
+      |v| p50=0.01109 p99=0.02000 max=0.02000
+    steps/observation/robot_state                shape=(71, 15)
+      step0=[-3.296989917755127, -1.6309900283813477, 2.4249799251556396, -2.406820058822632, -1.557629942893982, 2.791100025177002, 0.36735999584198, 0.05682000145316124, -0.014340000227093697, 0.633650004863739, 0.7733100056648254, 0.015629999339580536, 0.015200000256299973, 0.0, 0.0]
+      step1=[-3.296639919281006, -1.6166399717330933, 2.418109893798828, -2.4144299030303955, -1.5576900243759155, 2.7916998863220215, 0.3713099956512451, 0.05632999911904335, -0.016049999743700027, 0.6337299942970276, 0.7732499837875366, 0.015650000423192978, 0.015250000171363354, 0.0, 0.0]
+      last =[-3.0464301109313965, -1.527250051498413, 2.3538599014282227, -2.5545198917388916, -1.5915700197219849, 3.3904800415039062, 0.4049600064754486, 0.14374999701976776, -0.008990000002086163, 0.7565299868583679, 0.6491400003433228, 0.057829998433589935, 0.05423000082373619, 0.0, 0.0]
+      |v| p50=0.66290 p99=3.51065 max=3.56947
+    steps/reward                                 shape=(71, 1)
+      step0=[0.0]
+      step1=[0.0]
+      last =[0.0]
+      |v| p50=0.00000 p99=0.30000 max=1.00000
+
+  -- boundary flags --
+    steps/is_first             first3=[1, 0, 0] last3=[0, 0, 0]
+    steps/is_last              first3=[0, 0, 0] last3=[0, 1, 1]
+    steps/is_terminal          first3=[0, 0, 0] last3=[0, 1, 1]
+
+  -- no timestamp field anywhere: time must be synthesized --
+    timestamp-like keys: []

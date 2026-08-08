@@ -1,0 +1,107 @@
+
+==============================================================================
+layer: annotations (epic-kitchens-100-annotations, CC BY-NC 4.0)
+==============================================================================
+
+  EPIC_100_video_info.csv: 700 videos, columns=['video_id', 'duration', 'fps', 'resolution']
+  distinct official fps values: [np.float64(29.97002997002997), np.float64(47.952047952047955), np.float64(50.0), np.float64(59.9400599400599), np.float64(90.0)]
+  fps histogram:
+fps
+59.940060    423
+50.000000    268
+29.970030      4
+47.952048      4
+90.000000      1
+
+  sample rows:
+video_id    duration      fps resolution
+  P01_01 1652.152817 59.94006  1920x1080
+  P01_02  502.134967 59.94006  1920x1080
+  P01_03  118.852067 59.94006  1920x1080
+
+  EPIC_100_train.csv: 67217 action segments, columns=['narration_id', 'participant_id', 'video_id', 'narration_timestamp', 'start_timestamp', 'stop_timestamp', 'start_frame', 'stop_frame', 'narration', 'verb', 'verb_class', 'noun', 'noun_class', 'all_nouns', 'all_noun_classes']
+
+  first segment:
+narration_id               P01_01_0
+participant_id                  P01
+video_id                     P01_01
+narration_timestamp    00:00:01.089
+start_timestamp         00:00:00.14
+stop_timestamp          00:00:03.37
+start_frame                       8
+stop_frame                      202
+narration                 open door
+verb                           open
+verb_class                        3
+noun                           door
+noun_class                        3
+all_nouns                  ['door']
+all_noun_classes                [3]
+
+  -- seconds are authoritative, frame indices are derived --
+    official fps for P01_01 = 59.9400599400599
+    start=0.140s stop=3.370s duration=3.230s
+    derived_from_seconds@59.9400599400599: frames 8..202
+    csv's own start_frame/stop_frame: 8..202
+    same segment at the local 30 fps mirror: frames 4..101
+
+  -- which fps reproduces the CSV's own frame indices? (all 67k segments) --
+    official per-video fps      :  58.12% of segments reproduced
+    a flat 60 fps               :  44.28% of segments reproduced
+    a flat 50 fps               :  55.72% of segments reproduced
+    a flat 59.94 fps            :   2.42% of segments reproduced
+    50 fps videos @50, rest @60 : 100.00% of segments reproduced
+    (37455 segments are in 50 fps videos, 29762 are not — a single flat rate cannot fit both)
+    => frame_index_source must carry the EXTRACTION fps, which is not the video's official fps.
+
+==============================================================================
+layer: camera_pose (EPIC-Fields, COLMAP world-to-camera)
+==============================================================================
+  top-level keys: ['camera', 'images', 'points']
+  camera: {"id": 1, "model": "OPENCV", "width": 456, "height": 256, "params": [239.61061989963898, 243.07683578049975, 228.0, 128.0, -0.0013492140520415712, 0.00018135429459831083, 0.0008523602906170594, -0.0006090893593678664]}
+  points: 83458
+
+  registered frames: 35823
+  frame key format: 'frame_0000000001.jpg'
+  pose vector (qw qx qy qz tx ty tz): [0.5720269499031493, -0.0789700350303079, 0.3785660426529615, 0.7233509891483443, 2.0084226946160384, -1.9816041536487403, 2.176608853580767]
+  frame index range: 1..35889
+
+  -- mapping pose frame indices to official fps --
+    official fps=50.0  duration=717.7s  => total frames ~= 35885
+    max pose frame index = 35889
+    ratio max_index/total_frames = 1.0001
+    coverage = 99.83% of official frames
+    index step: min=1 median=1 max=22
+    => unregistered frames exist; they must be NULL in parquet, never zero-filled.
+
+==============================================================================
+layer: imu (GoPro metadata, EPIC-100 extension videos only)
+==============================================================================
+
+  -- P01_101 --
+    capabilities: has_imu=True  layers present: ['accl', 'gyro']
+
+    gyro: rows=362865 columns=['Milliseconds', 'GyroX', 'GyroY', 'GyroZ']
+ Milliseconds    GyroX     GyroY    GyroZ
+     0.000000 0.212993  0.001597 0.130458
+     5.128205 0.230564 -0.004792 0.121406
+    10.256410 0.234292 -0.010650 0.133120
+      time column 'Milliseconds' spans 1828994.9 ms => sample rate ~= 198.4 Hz
+      signal columns: ['GyroX', 'GyroY', 'GyroZ']
+      |value|: p50=0.0825 p99=1.8488 max=4.7359
+      MEASURED UNIT VERDICT: rad/s  (hand motion peaks are a few rad/s; deg/s would reach hundreds)
+
+    accl: rows=362865 columns=['Milliseconds', 'AcclX', 'AcclY', 'AcclZ']
+ Milliseconds    AcclX     AcclY    AcclZ
+     0.000000 8.055024 -0.389952 5.576555
+     5.128205 7.997608 -0.313397 5.586124
+    10.256410 7.988038 -0.313397 5.566986
+      time column 'Milliseconds' spans 1828994.9 ms => sample rate ~= 198.4 Hz
+      signal columns: ['AcclX', 'AcclY', 'AcclZ']
+      |value|: p50=2.9067 p99=10.3230 max=21.5478
+      mean |accel| = 9.8998  MEASURED UNIT VERDICT: m/s^2  (a mostly-stationary head-mounted camera should read ~9.81)
+
+  -- P01_01 --
+  404 (layer absent): https://data.bris.ac.uk/datasets/2g1n6qdydwa9u22shpxqzp0t8m/P01/meta_data/P01_01-gyro.csv
+  404 (layer absent): https://data.bris.ac.uk/datasets/2g1n6qdydwa9u22shpxqzp0t8m/P01/meta_data/P01_01-accl.csv
+    capabilities: has_imu=False  (layer absent for P01_01)
