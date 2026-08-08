@@ -528,3 +528,223 @@ embodiments:
             is_physical: true,
             metric_convertible: false,
           }
+
+  # ------------------------------------------------------------------------------------
+  # D — EPIC-KITCHENS-100 egocentric human. The embodiment that breaks the last three
+  # spec-level assumptions the robot sources let us keep (ADR 010):
+  #
+  #   1. There is NO per-frame action. A human wearing a head camera emits no command; the
+  #      only thing annotated is what they were doing, as one (verb, noun) label for the whole
+  #      segment. `level: episode_label` with zero channels — not a zero vector, not an empty
+  #      per-frame column. The label itself lives in `EpisodeMeta.task`, because it is one
+  #      value per episode and a per-frame table is the wrong shape for it.
+  #   2. The state channels are not MEASURED. They are a COLMAP reconstruction (EPIC-Fields),
+  #      so `origin: estimated`, and a QC rule that would FAIL on them is downgraded to
+  #      REVIEW by the engine (invariant 13).
+  #   3. The IMU does not share the video clock. 195 Hz against a 50 fps video: it is a
+  #      `streams` entry with `clock: own_timeline`, stored in its own parquet file, never a
+  #      column of frames.parquet (invariant 17).
+  #
+  # Capabilities vary PER EPISODE inside this one embodiment: pose and IMU are separate
+  # published layers with different video coverage. The embodiment declares what a channel
+  # would mean; the adapter decides, per episode, whether it exists at all.
+  # ------------------------------------------------------------------------------------
+  human_ego:
+    description: >-
+      EPIC-KITCHENS-100 egocentric human, one head-mounted GoPro. No robot, no gripper, no
+      joints, no commands. Action is a symbolic (verb, noun) label for the whole segment;
+      "state" is the reconstructed pose of the camera, not of a body.
+    is_real_robot: false # a human, not a robot — but the imagery is real, not simulated
+    is_teleop: false # nobody is teleoperating anything; this is unmediated human behaviour
+
+    action:
+      level: episode_label
+      # Deliberately empty. Invariant 3 forbids channels at a non-per-frame level: a channel
+      # is a column, and there is no column to declare.
+      channels: []
+
+    state:
+      level: per_frame_continuous
+      channels:
+        # Position of the camera in the reconstruction's own arbitrary world frame. The
+        # reconstruction is scale-free (monocular SfM), so the numbers have NO unit and are
+        # NOT convertible to metres. `unit: null` is the honest answer; "m" would be a lie
+        # that survives every type check.
+        - {
+            name: cam_t.x,
+            role: head,
+            space: camera_translation_abs,
+            origin: estimated,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+            frame: world,
+            group: cam_t,
+          }
+        - {
+            name: cam_t.y,
+            role: head,
+            space: camera_translation_abs,
+            origin: estimated,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+            frame: world,
+            group: cam_t,
+          }
+        - {
+            name: cam_t.z,
+            role: head,
+            space: camera_translation_abs,
+            origin: estimated,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+            frame: world,
+            group: cam_t,
+          }
+        # A unit quaternion, stored in the upstream w,x,y,z order. `repr` is recorded because
+        # a bare 4-vector is ambiguous — xyzw is just as common — and reading it wrong yields
+        # a rotation that is plausible and wrong.
+        - {
+            name: cam_q.w,
+            role: head,
+            space: camera_rotation_abs,
+            origin: estimated,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+            frame: world,
+            group: cam_q,
+            min: -1.0,
+            max: 1.0,
+            rotation: { repr: quat_wxyz },
+          }
+        - {
+            name: cam_q.x,
+            role: head,
+            space: camera_rotation_abs,
+            origin: estimated,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+            frame: world,
+            group: cam_q,
+            min: -1.0,
+            max: 1.0,
+            rotation: { repr: quat_wxyz },
+          }
+        - {
+            name: cam_q.y,
+            role: head,
+            space: camera_rotation_abs,
+            origin: estimated,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+            frame: world,
+            group: cam_q,
+            min: -1.0,
+            max: 1.0,
+            rotation: { repr: quat_wxyz },
+          }
+        - {
+            name: cam_q.z,
+            role: head,
+            space: camera_rotation_abs,
+            origin: estimated,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+            frame: world,
+            group: cam_q,
+            min: -1.0,
+            max: 1.0,
+            rotation: { repr: quat_wxyz },
+          }
+
+    # The IMU. Genuinely MEASURED — unlike the pose above — and genuinely metric: the units
+    # were confirmed against the data in M0, not read off a field name (ADR 004). It samples
+    # at ~195-198 Hz depending on the video, so it never enters the frame table.
+    #
+    # Gyroscope and accelerometer are TWO streams, not one six-column one: upstream ships two
+    # files with two `Milliseconds` columns, and on P28_101 those columns disagree for 793 of
+    # 141,924 samples (up to 15 ms apart). They are two sensors with two clocks; joining them
+    # by row index would rotate accelerations onto the wrong instant (ADR 012).
+    streams:
+      gyro:
+        channels:
+          - {
+              name: gyro.x,
+              role: head,
+              space: imu_angular_velocity,
+              origin: measured,
+              is_delta: false,
+              is_physical: true,
+              unit: rad/s,
+              metric_convertible: true,
+              frame: sensor,
+              group: gyro,
+            }
+          - {
+              name: gyro.y,
+              role: head,
+              space: imu_angular_velocity,
+              origin: measured,
+              is_delta: false,
+              is_physical: true,
+              unit: rad/s,
+              metric_convertible: true,
+              frame: sensor,
+              group: gyro,
+            }
+          - {
+              name: gyro.z,
+              role: head,
+              space: imu_angular_velocity,
+              origin: measured,
+              is_delta: false,
+              is_physical: true,
+              unit: rad/s,
+              metric_convertible: true,
+              frame: sensor,
+              group: gyro,
+            }
+      accel:
+        channels:
+          - {
+              name: accel.x,
+              role: head,
+              space: imu_linear_acceleration,
+              origin: measured,
+              is_delta: false,
+              is_physical: true,
+              unit: m/s^2,
+              metric_convertible: true,
+              frame: sensor,
+              group: accel,
+            }
+          - {
+              name: accel.y,
+              role: head,
+              space: imu_linear_acceleration,
+              origin: measured,
+              is_delta: false,
+              is_physical: true,
+              unit: m/s^2,
+              metric_convertible: true,
+              frame: sensor,
+              group: accel,
+            }
+          - {
+              name: accel.z,
+              role: head,
+              space: imu_linear_acceleration,
+              origin: measured,
+              is_delta: false,
+              is_physical: true,
+              unit: m/s^2,
+              metric_convertible: true,
+              frame: sensor,
+              group: accel,
+            }

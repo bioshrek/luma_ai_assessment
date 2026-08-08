@@ -9,12 +9,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from rdp.domain.action_spec import SignalClock, SignalLevel, SignalSpec
+from rdp.domain.action_spec import SignalClock, SignalLevel, SignalOrigin, SignalSpec
 from rdp.domain.boundary import EpisodeBoundary
 from rdp.domain.camera import CameraEncoding, CameraSpec
 from rdp.domain.capabilities import Capabilities
@@ -60,10 +62,17 @@ class EpisodeMeta(BaseModel):
         return self.provenance.has_real_timestamps
 
     def level_of(self, signal: str) -> SignalLevel:
+        return self.spec_of(signal).level
+
+    def origins_of(self, signal: str) -> frozenset[SignalOrigin]:
+        """Trustworthiness of the physical channels a rule would read (invariant 13)."""
+        return frozenset(c.origin for c in self.spec_of(signal).physical_channels)
+
+    def spec_of(self, signal: str) -> SignalSpec:
         if signal == "action":
-            return self.action_spec.level
+            return self.action_spec
         if signal == "state":
-            return self.state_spec.level
+            return self.state_spec
         raise InvariantViolation(f"unknown signal {signal!r}")
 
     @model_validator(mode="after")
@@ -90,6 +99,12 @@ class EpisodeMeta(BaseModel):
             raise InvariantViolation(
                 "has_video=True requires a camera with encoding='mp4_sidecar'"
             )
+        # Invariant 17: a stream exists precisely because it does not share the frame clock.
+        for stream_id, spec in self.stream_specs.items():
+            if spec.clock is not SignalClock.OWN_TIMELINE:
+                raise InvariantViolation(
+                    f"stream {stream_id!r} must declare clock='own_timeline' (invariant 17)"
+                )
         return self
 
 
@@ -99,6 +114,8 @@ class CanonicalEpisode:
 
     meta: EpisodeMeta
     frames: FrameTable
+    streams: Mapping[str, FrameTable] = field(default_factory=dict)
+    """Own-timeline signals, one table each, keyed as in `meta.stream_specs` (design §2.2h)."""
 
     def __post_init__(self) -> None:
         meta, frames = self.meta, self.frames
@@ -110,6 +127,28 @@ class CanonicalEpisode:
             raise InvariantViolation(f"{meta.uid}: meta and frames disagree on raw_frame_columns")
         for spec in (meta.action_spec, meta.state_spec):
             self._check_spec_columns(spec)
+        self._check_streams()
+
+    def _check_streams(self) -> None:
+        meta = self.meta
+        if set(self.streams) != set(meta.stream_specs):
+            raise InvariantViolation(
+                f"{meta.uid}: stream tables {sorted(self.streams)} != declared "
+                f"{sorted(meta.stream_specs)}"
+            )
+        for stream_id, table in self.streams.items():
+            spec = meta.stream_specs[stream_id]
+            expected = {TIME_COLUMN, *spec.column_names()}
+            if set(table.column_names) != expected:
+                raise InvariantViolation(
+                    f"{meta.uid}: stream {stream_id!r} columns {sorted(table.column_names)} != "
+                    f"declared {sorted(expected)} (invariant 2)"
+                )
+            # Invariant 17: the whole point of a separate table is its own, ordered clock.
+            if table.n_frames > 1 and bool((table.t[1:] < table.t[:-1]).any()):
+                raise InvariantViolation(
+                    f"{meta.uid}: stream {stream_id!r} has a non-monotonic 't' (invariant 17)"
+                )
 
     def _check_spec_columns(self, spec: SignalSpec) -> None:
         expected = spec.column_names()
@@ -138,13 +177,26 @@ class CanonicalEpisode:
             )
 
     def content_hash(self) -> str:
-        """Digest of canonical bytes — the logical content, not the parquet container."""
+        """Digest of canonical bytes — the logical content, not the parquet container.
+
+        Every enabled layer contributes: source D's pose lands in the frame table and its IMU in
+        a stream, so an episode whose IMU arrived only on the second run must not hash equal to
+        the one that had none.
+        """
         order = [
             TIME_COLUMN,
             *self.meta.action_spec.column_names(),
             *self.meta.state_spec.column_names(),
         ]
-        return self.frames.canonical_digest(order)
+        digest = self.frames.canonical_digest(order)
+        if not self.streams:
+            return digest
+        parts = [digest]
+        for stream_id in sorted(self.streams):
+            spec = self.meta.stream_specs[stream_id]
+            stream_order = [TIME_COLUMN, *spec.column_names()]
+            parts.append(f"{stream_id}={self.streams[stream_id].canonical_digest(stream_order)}")
+        return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
 class Episode(BaseModel):

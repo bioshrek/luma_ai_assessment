@@ -39,6 +39,7 @@ from rdp.domain.errors import InvariantViolation
 from rdp.domain.frames import FrameTable
 from rdp.domain.provenance import Provenance, synthesized_at
 from rdp.domain.source import Source
+from rdp.infrastructure.sources.staging import is_staged, mark_staged
 from rdp.infrastructure.sources.tfrecord import Feature, iter_records, parse_example
 from rdp.infrastructure.sources.upstream_fetch import UpstreamFetcher
 from rdp.infrastructure.storage.atomic_fs import atomic_write_bytes, atomic_write_text
@@ -49,7 +50,6 @@ DATASET_INFO_PATH = "dataset_info.json"
 FEATURES_PATH = "features.json"
 SUPPORTED_FILE_FORMAT = "tfrecord"
 
-STAGED_MARKER = ".staged.json"
 RECORD_FILE = "record.pb"
 REF_FILE = "ref.json"
 
@@ -137,8 +137,7 @@ class RLDSAdapter:
     # -- fetch -------------------------------------------------------------------------
 
     def fetch(self, ref: EpisodeRef, source: Source, dest: Path) -> RawEpisode:
-        marker = dest / STAGED_MARKER
-        if marker.exists():
+        if is_staged(dest, self.adapter_version):
             return RawEpisode(ref=ref, path=dest, upstream_revision=source.revision)
 
         record = self._read_record(
@@ -160,7 +159,7 @@ class RLDSAdapter:
                 sort_keys=True,
             ),
         )
-        atomic_write_text(marker, json.dumps({"record_bytes": len(record)}))
+        mark_staged(dest, self.adapter_version, record_bytes=len(record))
         return RawEpisode(ref=ref, path=dest, upstream_revision=source.revision)
 
     def _read_record(self, source: Source, shard_name: str, index_in_shard: int) -> bytes:

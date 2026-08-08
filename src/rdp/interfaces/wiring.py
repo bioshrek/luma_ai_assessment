@@ -22,6 +22,7 @@ from rdp.infrastructure.clock import SystemClock
 from rdp.infrastructure.config.loader import load_embodiments, load_rules, load_sources
 from rdp.infrastructure.faults import fault_injector_from_env
 from rdp.infrastructure.persistence.catalog import SqliteCatalog, SqliteUnitOfWork
+from rdp.infrastructure.sources.epic_adapter import EpicKitchensAdapter
 from rdp.infrastructure.sources.lerobot_adapter import LeRobotAdapter
 from rdp.infrastructure.sources.rlds_adapter import RLDSAdapter
 from rdp.infrastructure.sources.upstream_fetch import UpstreamFetcher
@@ -126,9 +127,9 @@ class Container:
             return LeRobotAdapter(fetcher, self.embodiments)
         if source.kind == "rlds":
             return RLDSAdapter(fetcher, self.embodiments, source.shard_layout_revision)
-        raise NotImplementedError(
-            f"no adapter for kind {source.kind!r} yet; source D arrives in M4"
-        )
+        if source.kind == "epic_kitchens":
+            return EpicKitchensAdapter(fetcher, self.embodiments)
+        raise NotImplementedError(f"no adapter for source kind {source.kind!r}")
 
     def ingest(self) -> IngestEpisodes:
         return IngestEpisodes(

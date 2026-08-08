@@ -5,7 +5,7 @@
 # changes, so old verdicts stay interpretable instead of silently re-meaning.
 
 version: 1
-ruleset_version: "1.0"
+ruleset_version: "1.1"
 
 rules:
   # Timestamps strictly increasing. Gated on real timestamps: on a source whose clock we
@@ -13,3 +13,22 @@ rules:
   # so it resolves to SKIPPED(reason=synthetic_timestamp) instead.
   - id: TS_MONOTONIC
     enabled: true
+
+  # Action values finite and inside their declared channel limits. Two gates, both load-bearing:
+  # `has_action` alone is not enough, because source D has an action that is an episode-level
+  # (verb, noun) label and therefore has no action column at all. Requiring
+  # level == per_frame_continuous turns that into SKIPPED(reason=action_level_is_episode_label)
+  # — a conclusion distinct from "this source has no action", and counted separately in the run
+  # report. Limits come from config/embodiments.yaml; the rule has no thresholds of its own.
+  - id: ACTION_RANGE
+    enabled: true
+
+  # How much of the segment the camera-pose layer actually reconstructed. Only source D can
+  # reach this: it is gated on has_camera_pose, which varies BETWEEN EPISODES OF THE SAME
+  # SOURCE because EPIC-Fields publishes poses for some videos and not others. Verdict is
+  # REVIEW, never FAIL — an unregistered frame is a reconstruction limit, not corrupt data.
+  - id: POSE_COVERAGE
+    enabled: true
+    params:
+      min_coverage: 0.8 # fraction of frames carrying a complete pose
+      max_gap_s: 0.5 # longest continuous unregistered run, in seconds, not frames

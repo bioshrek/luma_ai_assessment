@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
-from rdp.domain.action_spec import SignalLevel
+from rdp.domain.action_spec import SignalLevel, SignalOrigin, SignalSpec
 from rdp.domain.capabilities import Capabilities
 from rdp.domain.frames import FrameTable
 
@@ -60,6 +60,8 @@ class QCRule(Protocol):
     @property
     def required_capabilities(self) -> frozenset[str]: ...
 
+    # The signals this rule reads, and the level each must be at. Doubles as the engine's handle
+    # on which channels' `origin` governs the severity downgrade (invariant 13).
     @property
     def required_levels(self) -> Mapping[str, SignalLevel]: ...
 
@@ -82,3 +84,7 @@ class QCEpisodeView(Protocol):
     def has_real_timestamps(self) -> bool: ...
 
     def level_of(self, signal: str) -> SignalLevel: ...
+
+    def origins_of(self, signal: str) -> frozenset[SignalOrigin]: ...
+
+    def spec_of(self, signal: str) -> SignalSpec: ...

@@ -298,7 +298,8 @@ class IngestEpisodes:
         if meta is None or episode.frames_path is None:
             raise RuntimeError(f"{episode.uid}: normalized episode has no stored frames")
         frames: FrameTable = self.frame_store.read_frames(episode.frames_path)
-        return CanonicalEpisode(meta=meta, frames=frames)
+        streams = self.frame_store.read_streams(episode.frames_path)
+        return CanonicalEpisode(meta=meta, frames=frames, streams=streams)
 
     def _staging_dir(self, ref: EpisodeRef) -> Path:
         return self.raw_root / ref.source_id / ref.upstream_id

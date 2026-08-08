@@ -6,7 +6,7 @@ paths and mirrors stay out of the committed file.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,8 @@ import yaml
 from rdp.domain.action_spec import Channel, SignalLevel
 from rdp.domain.embodiment import Embodiment, EmbodimentRegistry
 from rdp.domain.qc.rule import QCRule
+from rdp.domain.qc.rules.action_range import ActionRange
+from rdp.domain.qc.rules.pose_coverage import PoseCoverage
 from rdp.domain.qc.rules.ts_monotonic import TsMonotonic
 from rdp.domain.source import Source
 
@@ -33,7 +35,11 @@ SOURCE_FIELDS = frozenset(
     }
 )
 
-RULE_REGISTRY: dict[str, type[TsMonotonic]] = {"TS_MONOTONIC": TsMonotonic}
+RULE_REGISTRY: dict[str, Callable[..., QCRule]] = {
+    "TS_MONOTONIC": TsMonotonic,
+    "ACTION_RANGE": ActionRange,
+    "POSE_COVERAGE": PoseCoverage,
+}
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -68,6 +74,7 @@ def load_embodiments(path: Path) -> EmbodimentRegistry:
     for embodiment_id, entry in document.get("embodiments", {}).items():
         action = entry.get("action", {})
         state = entry.get("state", {})
+        streams = entry.get("streams", {})
         embodiments[embodiment_id] = Embodiment(
             embodiment_id=embodiment_id,
             description=entry.get("description", ""),
@@ -77,6 +84,10 @@ def load_embodiments(path: Path) -> EmbodimentRegistry:
             state_level=SignalLevel(state.get("level", SignalLevel.ABSENT)),
             action_channels=_channels(action.get("channels", [])),
             state_channels=_channels(state.get("channels", [])),
+            stream_channels={
+                stream_id: _channels(stream.get("channels", []))
+                for stream_id, stream in streams.items()
+            },
         )
     return EmbodimentRegistry(embodiments=embodiments)
 
@@ -94,5 +105,6 @@ def load_rules(path: Path) -> tuple[list[QCRule], str]:
         rule_id = entry["id"]
         if rule_id not in RULE_REGISTRY:
             raise ValueError(f"qc.yaml enables unknown rule {rule_id!r}")
-        rules.append(RULE_REGISTRY[rule_id]())
+        # Thresholds live in qc.yaml, versioned by `ruleset_version`, never in the rule.
+        rules.append(RULE_REGISTRY[rule_id](**entry.get("params", {})))
     return rules, str(document.get("ruleset_version", "0"))

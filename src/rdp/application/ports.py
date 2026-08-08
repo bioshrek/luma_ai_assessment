@@ -153,6 +153,10 @@ class ExportRepository(Protocol):
 class SourceRepository(Protocol):
     def upsert(self, source: Source) -> None: ...
 
+    # `source_id -> license`. Export lines carry it, because a training set assembled from four
+    # sources inherits the most restrictive one and the consumer must be able to see that.
+    def licenses(self) -> dict[str, str | None]: ...
+
 
 class UnitOfWork(AbstractContextManager["UnitOfWork"], Protocol):
     """One transaction. Committing an episode's stage advance is one of these — never a batch.
@@ -196,6 +200,9 @@ class FrameStore(Protocol):
         ...
 
     def read_frames(self, path: str) -> FrameTable: ...
+
+    # Own-timeline tables, keyed as in `meta.stream_specs`; empty for a source without one.
+    def read_streams(self, path: str) -> dict[str, FrameTable]: ...
 
     def read_meta(self, path: str) -> EpisodeMeta: ...
 

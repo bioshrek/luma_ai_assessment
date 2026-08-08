@@ -32,10 +32,11 @@ from rdp.domain.errors import InvariantViolation
 from rdp.domain.frames import FrameTable
 from rdp.domain.provenance import REAL_TIMESTAMP, Provenance, synthesized_at
 from rdp.domain.source import Source
+from rdp.infrastructure.sources.staging import is_staged, mark_staged
 from rdp.infrastructure.sources.upstream_fetch import UpstreamFetcher, UpstreamNotFound
 from rdp.infrastructure.storage.atomic_fs import atomic_write, atomic_write_text
 
-ADAPTER_VERSION = "lerobot@1.0.0"
+ADAPTER_VERSION = "lerobot@1.1.0"
 
 INFO_PATH = "meta/info.json"
 TASKS_PATH = "meta/tasks.parquet"
@@ -45,12 +46,13 @@ ACTION_COLUMN = "action"
 STATE_COLUMN = "observation.state"
 TIMESTAMP_COLUMN = "timestamp"
 FRAME_INDEX_COLUMN = "frame_index"
+_INDEX_COLUMN = "index"
+"""The dataset-global row id `meta/episodes` boundaries are expressed in."""
 
 # Upstream bookkeeping: row ids into the concatenated dataset, not episode content. Dropping
 # them is a lossy transform and is recorded as such in Provenance.transforms.
 DROPPED_COLUMNS = ("episode_index", "frame_index", "index", "task_index")
 
-STAGED_MARKER = ".staged.json"
 ROWS_FILE = "rows.parquet"
 REF_FILE = "ref.json"
 
@@ -118,9 +120,7 @@ class LeRobotAdapter:
     # -- fetch -------------------------------------------------------------------------
 
     def fetch(self, ref: EpisodeRef, source: Source, dest: Path) -> RawEpisode:
-        marker = dest / STAGED_MARKER
-        if marker.exists():
-            # Idempotent: raw bytes are immutable, so a completed staging is never redone.
+        if is_staged(dest, self.adapter_version):
             return RawEpisode(ref=ref, path=dest, upstream_revision=source.revision)
 
         info = self._info(source)
@@ -130,7 +130,17 @@ class LeRobotAdapter:
         shard = self._fetcher.local_path(source, data_rel)
         start = int(ref.extra["dataset_from_index"])
         stop = int(ref.extra["dataset_to_index"])
-        rows = pq.read_table(shard).slice(start, stop - start)
+        # `dataset_from_index` counts rows of the WHOLE dataset while the shard holds only its
+        # own file's rows, so it is a slice position for `file-000` and a lie for every other
+        # file. The rows are selected by the dataset-global `index` column they refer to.
+        table = pq.read_table(shard)
+        index = table.column(_INDEX_COLUMN).to_numpy(zero_copy_only=False)
+        rows = table.filter(pa.array((index >= start) & (index < stop)))
+        if rows.num_rows != stop - start:
+            raise InvariantViolation(
+                f"{ref.upstream_id}: {data_rel} holds {rows.num_rows} of the "
+                f"{stop - start} rows the episode metadata claims"
+            )
 
         atomic_write(dest / ROWS_FILE, lambda tmp: pq.write_table(rows, tmp))
         atomic_write_text(
@@ -150,7 +160,7 @@ class LeRobotAdapter:
             ),
         )
         # The marker is written last: its presence means everything before it is durable.
-        atomic_write_text(marker, json.dumps({"rows": rows.num_rows}))
+        mark_staged(dest, self.adapter_version, rows=rows.num_rows)
         return RawEpisode(ref=ref, path=dest, upstream_revision=source.revision)
 
     # -- normalize ---------------------------------------------------------------------

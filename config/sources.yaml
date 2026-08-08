@@ -63,24 +63,45 @@ sources:
       corpus (and re-verifies content_hash) instead of duplicating it.
 
   # D — EPIC-KITCHENS-100, taken by layer. Action is an episode-level symbolic label.
+  #
+  # Three layers, three different servers, three different publication schedules. Each is
+  # fetched independently and a 404 degrades exactly that layer's capabilities: a missing
+  # camera pose is not an ingestion failure, it is `has_camera_pose: false`. That is why the
+  # capabilities of two episodes of THIS SOURCE differ (ADR 011).
   - source_id: epic100
     kind: epic_kitchens
-    uri: https://github.com/epic-kitchens/epic-kitchens-100-annotations
+    # The annotation layer. Ends at the revision, because the fetcher appends the relative
+    # path — `EPIC_100_train.csv`, `EPIC_100_video_info.csv`.
+    uri: https://raw.githubusercontent.com/epic-kitchens/epic-kitchens-100-annotations/master
     revision: master
     embodiment: human_ego
     license: cc-by-nc-4.0 # non-commercial; propagates to export lines
     max_episodes: 60 # action segments, ~3 s each -> ~9k frames @50 fps
     layers: [annotations, camera_pose, imu]
+    # Layer 2: EPIC-Fields COLMAP reconstructions, `<video_id>.json`. The upstream release is
+    # a multi-GB archive; this URI serves the single published example, so most videos 404
+    # here — which is the point. Point it at a full mirror in sources.local.yaml to get more.
+    camera_pose_uri: https://raw.githubusercontent.com/epic-kitchens/epic-fields-code/main/example_data
+    # Layer 3: GoPro metadata, `<participant>/meta_data/<video_id>-{gyro,accl}.csv`. Only
+    # exists for the EPIC-100 extension videos; every EPIC-55 era video 404s.
+    imu_uri: https://data.bris.ac.uk/datasets/2g1n6qdydwa9u22shpxqzp0t8m
+    # No nominal IMU rate is declared here on purpose: it is ~195 Hz on P01_101 and ~198 Hz on
+    # P01_103, so the stream carries the timestamps upstream shipped and nothing derives a rate.
     # Frame indices are derived from seconds at the EXTRACTION fps, which is NOT the video's
     # official fps: 50 fps videos were extracted at 50, everything else at a flat 60.
     # Measured against all 67,217 train segments (100% reproduced). See ADR 004.
+    # We store the OFFICIAL-fps numbering instead, because that is the clock EPIC-Fields
+    # indexes its poses on; the extraction numbering is preserved verbatim in raw_extra and
+    # the two are never mixed. See ADR 010.
     frame_extraction_fps:
       when_official_fps_is_50: 50
       otherwise: 60
-    videos: # spread across participants; deliberately mixes IMU present/absent
-      - P01_01 # EPIC-55 era, official 59.94 fps: no GoPro metadata -> has_imu=false
-      - P01_101 # extension, official 50 fps: has GoPro metadata -> has_imu=true
-      - P28_101 # EPIC-Fields example reconstruction is published for this video
+    videos: # deliberately three different layer combinations, verified by probe (ADR 011)
+      - P01_01 # EPIC-55 era, official 59.94 fps: no GoPro metadata, no reconstruction
+      - P01_103 # extension, official 50 fps: IMU only
+      - P28_101 # extension, official 50 fps: IMU *and* the published EPIC-Fields example
     notes: >-
-      Seconds are authoritative, frame indices are derived. The local 30 fps transcode is a
-      mirror, registered in config/sources.local.yaml, never an authoritative source.
+      Seconds are authoritative, frame indices are derived. Episodes are listed round-robin
+      across `videos`, so even a small --max-episodes spans videos with and without each
+      layer. The local 30 fps transcode is a mirror, registered in
+      config/sources.local.yaml, never an authoritative source.

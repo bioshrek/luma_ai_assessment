@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
+from rdp.domain.action_spec import SignalOrigin
 from rdp.domain.frames import FrameTable
 from rdp.domain.qc.rule import EpisodeVerdict, QCEpisodeView, QCRule, RuleResult, Verdict
 
@@ -28,6 +29,21 @@ def gate(rule: QCRule, meta: QCEpisodeView) -> str | None:
     return None
 
 
+def downgrade_basis(rule: QCRule, meta: QCEpisodeView) -> str | None:
+    """Invariant 13: name the non-`measured` origins of everything this rule reads.
+
+    A jump in a COLMAP-estimated camera pose is a reconstruction failure, not corrupted data;
+    returning FAIL there uses model error to discredit the data. When *any* channel the rule
+    reads is measured, a FAIL may genuinely be about that channel, so nothing is downgraded.
+    """
+    origins: set[SignalOrigin] = set()
+    for signal in sorted(rule.required_levels):
+        origins |= meta.origins_of(signal)
+    if not origins or SignalOrigin.MEASURED in origins:
+        return None
+    return ",".join(sorted(origin.value for origin in origins))
+
+
 def evaluate_rule(rule: QCRule, frames: FrameTable, meta: QCEpisodeView) -> RuleResult:
     """Run one rule. A rule that raises becomes an ERROR verdict; the run continues."""
     n_frames = {"n_frames": float(frames.n_frames)}
@@ -38,7 +54,24 @@ def evaluate_rule(rule: QCRule, frames: FrameTable, meta: QCEpisodeView) -> Rule
         result = rule.evaluate(frames, meta)
     except Exception as exc:  # one bad episode never aborts a run (design §3)
         return RuleResult(rule.rule_id, Verdict.ERROR, n_frames, f"{type(exc).__name__}: {exc}")
+    result = _apply_downgrade(rule, result, meta)
     return RuleResult(result.rule_id, result.verdict, {**n_frames, **result.metrics}, result.reason)
+
+
+def _apply_downgrade(rule: QCRule, result: RuleResult, meta: QCEpisodeView) -> RuleResult:
+    """Applied here so no rule implementation can bypass it (invariant 13)."""
+    if result.verdict is not Verdict.FAIL:
+        return result
+    basis = downgrade_basis(rule, meta)
+    if basis is None:
+        return result
+    return RuleResult(
+        result.rule_id,
+        Verdict.REVIEW,
+        result.metrics,
+        f"{result.reason} [FAIL downgraded to REVIEW: every channel read has "
+        f"origin={basis}, not measured (invariant 13)]",
+    )
 
 
 def evaluate_all(

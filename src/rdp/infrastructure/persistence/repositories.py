@@ -138,6 +138,18 @@ class SqliteEpisodeStateRepository:
         return [_row_to_state(row) for row in rows]
 
 
+# `qc_results` is append-per-run history: one row per (episode, rule, run). Anything that asks
+# "what does the catalog think *now*" must read the newest row of each (episode, rule) pair, not
+# every row it has ever had. `rowid` breaks the tie inside one run, whose `created_at` is shared.
+_LATEST_QC = """
+    SELECT episode_uid, rule_id, verdict FROM (
+        SELECT episode_uid, rule_id, verdict, ROW_NUMBER() OVER (
+            PARTITION BY episode_uid, rule_id ORDER BY created_at DESC, rowid DESC
+        ) AS recency FROM qc_results
+    ) WHERE recency = 1
+"""
+
+
 class SqliteQCResultRepository:
     def __init__(self, conn: sqlite3.Connection, ruleset_version: str, now: str) -> None:
         self._conn = conn
@@ -169,18 +181,22 @@ class SqliteQCResultRepository:
 
     def rules_hit(self, episode_uid: str) -> list[str]:
         rows = self._conn.execute(
-            "SELECT DISTINCT rule_id FROM qc_results "
-            "WHERE episode_uid = ? AND verdict IN (?, ?) ORDER BY rule_id",
+            f"SELECT DISTINCT rule_id FROM ({_LATEST_QC}) WHERE episode_uid = ? "
+            "AND verdict IN (?, ?) ORDER BY rule_id",
             (episode_uid, Verdict.FAIL.value, Verdict.REVIEW.value),
         ).fetchall()
         return [row[0] for row in rows]
 
     def verdict_counts(self, run_id: str | None = None) -> dict[str, dict[str, int]]:
-        sql = "SELECT rule_id, verdict, COUNT(*) FROM qc_results"
-        params: tuple[Any, ...] = ()
+        # Scoped to a run, this is "what that run concluded". Unscoped, it is the catalog's
+        # current opinion — one row per (episode, rule), the latest — so that it lines up with
+        # `counts_by_stage()` instead of summing every re-QC an episode has ever had.
         if run_id:
-            sql += " WHERE run_id = ?"
-            params = (run_id,)
+            sql = "SELECT rule_id, verdict, COUNT(*) FROM qc_results WHERE run_id = ?"
+            params: tuple[Any, ...] = (run_id,)
+        else:
+            sql = f"SELECT rule_id, verdict, COUNT(*) FROM ({_LATEST_QC})"
+            params = ()
         sql += " GROUP BY rule_id, verdict ORDER BY rule_id, verdict"
         out: dict[str, dict[str, int]] = {}
         for rule_id, verdict, count in self._conn.execute(sql, params).fetchall():
@@ -290,6 +306,10 @@ class SqliteSourceRepository:
                 self._now,
             ),
         )
+
+    def licenses(self) -> dict[str, str | None]:
+        rows = self._conn.execute("SELECT source_id, license FROM sources").fetchall()
+        return {str(row[0]): (None if row[1] is None else str(row[1])) for row in rows}
 
 
 def _episode_to_row(episode: Episode) -> tuple[Any, ...]:

@@ -58,12 +58,17 @@ class ExportSubset:
 
         with self.uow_factory() as uow:
             episodes = uow.episodes.list_exportable(verdicts=verdicts, embodiment=embodiment)
+            licenses = uow.sources.licenses()
             plan = plan_sequential(
                 [self._candidate(episode) for episode in episodes], budget_frames
             )
             chosen = {entry.episode_uid for entry in plan.entries}
             records = [
-                self._record(episode, uow.qc_results.rules_hit(episode.uid))
+                self._record(
+                    episode,
+                    uow.qc_results.rules_hit(episode.uid),
+                    licenses.get(episode.source_id),
+                )
                 for episode in episodes
                 if episode.uid in chosen
             ]
@@ -85,12 +90,17 @@ class ExportSubset:
             qc_verdict=episode.qc_verdict,
         )
 
-    def _record(self, episode: Episode, rules_hit: list[str]) -> dict[str, Any]:
+    def _record(
+        self, episode: Episode, rules_hit: list[str], license_id: str | None
+    ) -> dict[str, Any]:
         meta = self._meta(episode)
         action = meta.action_spec
         return {
             "episode_uid": episode.uid,
             "source_id": episode.source_id,
+            # Source D is CC BY-NC 4.0. A manifest that omits that turns a licence term into an
+            # unwritten assumption of whoever trains on it.
+            "license": license_id,
             "embodiment": meta.embodiment,
             "task": meta.task,
             # A consumer must not have to infer the action semantics from the source name.
