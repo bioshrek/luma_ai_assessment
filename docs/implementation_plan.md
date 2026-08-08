@@ -605,13 +605,45 @@ python scripts/check_report_consistency.py   # report numbers vs direct SQL aggr
 
 **Exit criteria**
 
-- [ ] Every number in the markdown report is reproduced by an independent SQL query in the
+- [x] Every number in the markdown report is reproduced by an independent SQL query in the
       consistency checker; any mismatch fails the test suite.
-- [ ] `rdp report --run <id>` produces identical output when run twice, days apart, from the
+      _11 sections reproduced, 3 declared measured and exempt. The checker parses the rendered
+      markdown, not the `Report` object, and its SQL is spelled differently from the
+      repositories' — the latest verdict per `(episode, rule)` is a `ROW_NUMBER()` window in
+      production and a correlated `rowid` subquery in the checker. Two negative-control tests
+      prove the checker fails on a wrong number and on a section with no query behind it._
+- [x] `rdp report --run <id>` produces identical output when run twice, days apart, from the
       database alone.
-- [ ] Skip reasons are separately countable; "no action" and "action is an episode label" never
+      _Every derived section is byte-identical across renders and across processes. Disk usage
+      is not, and that is a measurement, not a drift: `catalog.sqlite` grew from 4 KB to 168 KB
+      between two renders because closing the last WAL connection checkpoints._
+- [x] Skip reasons are separately countable; "no action" and "action is an episode label" never
       collapse into one bucket.
-- [ ] Adding the console presenter required no `application/` or `domain/` change.
+      _`{rule_id: {reason: n}}` end to end. `STATE_ACTION_ECHO` skips for three distinct reasons
+      on the real corpus — 40 no state, 20 episode-label action, 12 "action is mixed, state is
+      unknown"._
+- [x] Adding the console presenter required no `application/` or `domain/` change.
+      _One class in `interfaces/presenters/report_md.py` and one line in
+      `wiring.run_reporters()`. `RunReporter` now has three implementations (JSON, markdown,
+      console) and the CLI publishes to the port instead of printing counters itself._
+
+**Findings (see [ADR 017](adr/017-report-vocabulary-and-consistency-checker.md))**
+
+1. **`hit_rate` must divide by the episodes a rule ran on, not by the corpus.** `POSE_COVERAGE`
+   skips 182 of 202 episodes; 0 hits out of 20 evaluations and 0 out of 202 are different
+   statements, and only the first is honest.
+2. **The cumulative rule-rate table immediately reported on the ruleset rather than the data:
+   three of eleven rules have never evaluated a single episode** — `TS_MONOTONIC` and
+   `FPS_DRIFT` because no source ships a real per-frame clock, `VIDEO_FRAME_MISMATCH` because the
+   corpus is configured `with_video: false`. Not manufactured away; recorded for M8's known
+   limitations, in the same spirit as M5's refusal to manufacture a FAIL.
+3. **Wall time is the one number the catalog cannot be asked for again, so a run that predates
+   the measurement says so.** The 30 runs already in `reports/` render
+   `_Not measured: this run predates stage timing._` rather than a table of `0.000` — the
+   never-zero-fill rule applied to the pipeline's own telemetry.
+4. **`stage_calls` is not the episode count.** The crash-resume demo's resumed run times `fetch`
+   over 66 episodes and `normalize` over 67: one episode was already fetched when the process was
+   killed and re-entered the pipeline one stage in.
 
 ---
 

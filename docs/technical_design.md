@@ -652,10 +652,18 @@ One caveat on the example budget: the committed corpus is **41 418 eligible fram
 
 After `rdp run` finishes it emits both a console table and `reports/run_<run_id>.json` / `.md`:
 
-- **This run**: new episode count, normalization successes/failures (with top-N failure reasons), QC pass/fail counted by `rule_id`, elapsed time, skip count (with skip reasons: already processed / capability unmet).
+- **This run**: new episode count, normalization successes/failures (with top-N failure reasons), QC pass/fail counted by `rule_id`, wall time per stage, skip count (with skip reasons: already processed / capability unmet).
 - **Cumulative**: total episodes, total frames, the source × embodiment cross-tabulation, per-rule hit and SKIPPED rates, store size.
 
-`rdp report` can be replayed independently (pure SQL aggregation, with no dependence on this run's in-memory state).
+`rdp report` can be replayed independently (pure SQL aggregation, with no dependence on this run's in-memory state). It takes `--run <id>` (default: the latest), `--cumulative` for the catalog alone, and `--format table|md|json`; markdown and JSON go to plain stdout so `rdp report --format md > run.md` is byte-identical to what the presenter rendered.
+
+**One statistical vocabulary.** `domain/run.py` owns the _definitions_ — the stage names, the failure-reason bucketing, and `RuleRate` — so the markdown, the JSON and the console table format the same numbers and cannot invent a fourth answer. Two definitions are fixed there: `hit_rate` divides by the episodes a rule actually **evaluated** (never by the corpus, which would flatter a rule that skipped most of it), and a failure is bucketed by its **exception type**, not its message, because messages carry episode uids and produce one bucket per episode.
+
+**Skip reasons are `{rule_id: {reason: n}}`, never flattened into one key.** "There is no action" and "the action is an episode label" are different conclusions and must stay separately countable (§3). `STATE_ACTION_ECHO` skips for three distinct reasons on the real corpus.
+
+**Measured vs derived.** Exactly three sections are _measured_ and cannot be re-derived from the catalog — stage wall time, the recovery findings, and the free-text failure strings; they are listed as `MEASURED_SECTIONS` in the presenter. Everything else is a query. Stage timing uses `Clock.monotonic()` (wall time can step backwards) and wraps each stage in `try/finally`, so a stage that fails _slowly_ is still visible. A run recorded before timing existed renders "not measured" rather than `0.000` — the never-zero-fill rule applied to telemetry. Store size on disk is measured through a separate one-method `StoreInspector` port rather than through `ArtifactMaintenance`, whose job is crash recovery.
+
+**`scripts/check_report_consistency.py` re-derives every non-measured number with its own SQL and diffs it against the rendered markdown** (not against the `Report` object, which would compare the code to itself). Its queries are deliberately spelled differently from the repositories'. A section the checker does not recognise is a failure, so a new table cannot ship without a query behind it. See [ADR 017](adr/017-report-vocabulary-and-consistency-checker.md).
 
 ---
 
@@ -725,6 +733,7 @@ src/rdp/
   application/               # use-case orchestration + port definitions (depends on domain, not on infra)
     ports.py                 # SourcePort / EpisodeRepository / FrameStore / BlobStore
                              # / UnitOfWork / Clock / RunReporter / FaultInjector
+                             # / ArtifactMaintenance (recovery) / StoreInspector (reporting)
     ingest_episodes.py       # use case: discover -> fetch -> normalize -> qc -> commit
     recover_incomplete.py    # use case: the startup recovery pass
     export_subset.py         # use case: budget -> SubsetPlan -> JSONL

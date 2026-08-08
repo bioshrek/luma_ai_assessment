@@ -21,7 +21,7 @@ fixed-width vector is wrong and is explicitly rejected by the design.
 
 ## Current State
 
-**M0–M6 are complete. M7 is next: reporting depth and the observability seams.**
+**M0–M7 are complete. M8 is next: documentation, hardening, and delivery.**
 
 `rdp run && rdp export && rdp report` works end to end on real data for **all four** sources —
 `pusht`, `aloha_sim_insertion`, `berkeley_ur5` and `epic100`: **202 episodes committed, 0
@@ -68,6 +68,19 @@ both bounds give way to `1/n`), and the redistribution of an under-filled group'
 **ignore** the cap — `ur5_single_arm` offers 738 frames against a 1 606 quota, and re-capping the
 remainder would discard real frames to keep the table tidy. See ADR 016.
 
+M7 made the report the system's single statistical vocabulary: `domain/run.py` owns the
+_definitions_ (`RuleRate`, `failure_reason`, the stage names) and the markdown, JSON and console
+presenters only format them. `scripts/check_report_consistency.py` re-derives every number with
+its own SQL — spelled differently from the repositories' — and diffs it against the **rendered
+markdown**; 11 sections are reproduced and 3 are declared measured and exempt, and a section the
+checker does not recognise is a failure rather than a gap. Its most uncomfortable output is about
+the ruleset, not the data: **3 of 11 rules have never evaluated a single episode** (`TS_MONOTONIC`
+and `FPS_DRIFT` — no source ships a real clock; `VIDEO_FRAME_MISMATCH` — the corpus runs
+`with_video: false`), which is recorded rather than manufactured away. Two other lessons:
+`hit_rate` must divide by what a rule **evaluated**, not by the corpus (`POSE_COVERAGE` skips 182
+of 202), and a run recorded before stage timing existed must say **"not measured"** rather than
+render `0.000` — the never-zero-fill rule applied to our own telemetry. See ADR 017.
+
 ```
 docs/technical_design.md      # the design authority — domain model, schema, QC, layering
 docs/implementation_plan.md   # milestones M0–M8, each with verification commands
@@ -85,6 +98,8 @@ docs/adr/014..015             # M5's: thresholds from measured distributions and
                               #   unpersisted stream_specs that only REDO_QC could expose
 docs/adr/016                  # M6's: clamped square-root quotas, residual redistribution that
                               #   ignores the cap, and a seed that is a digest, not a shuffle
+docs/adr/017                  # M7's: one statistical vocabulary, measured vs derived sections,
+                              #   and a checker whose SQL is spelled differently on purpose
 docs/assessment.md            # original requirements (Chinese)
 docs/assessment_for_ai.md     # requirements, agent-facing
 docs/ai_chat_sessions/*.json  # raw AI transcripts — archival, do not edit or translate
@@ -94,18 +109,20 @@ config/{sources,embodiments,qc}.yaml   # sources, per-embodiment channel semanti
 reports/qc_stats.md           # `rdp stats` output — the distributions those thresholds read
 spikes/probe_*.py             # throwaway probes; _out/*.txt is their captured output
 src/rdp/{domain,application,infrastructure,interfaces}/
-tests/{unit,integration,acceptance,fakes,fixtures}/     # 250 tests; domain coverage 97.3%
+tests/{unit,integration,acceptance,fakes,fixtures}/     # 275 tests; domain coverage 97.5%
 scripts/make_fixtures.py      # regenerates the four mini fixtures (~505 KB total)
+scripts/check_report_consistency.py   # every reported number re-derived by independent SQL
 scripts/demo_crash_resume.sh  # real kill -9 against a throwaway store under .demo/
 ```
 
-**Read `docs/adr/000`–`016` before touching an adapter or the resume logic.** M0 measured four
+**Read `docs/adr/000`–`017` before touching an adapter or the resume logic.** M0 measured four
 things the design had guessed wrong, M1 a fifth, M2 corrected one exit criterion that was
 physically unachievable as written, M3 corrected C's episode identity, its padding rule and the
 rotation representation, M4 reversed which of EPIC's two frame numberings we store and split
 its IMU into two streams, M5 replaced two guessed QC thresholds with measured ones and added
-`stream_specs_json` to the catalog, and M6 added four columns to `exports` so a `balanced`
-subset can be replayed; all are reconciled in `docs/technical_design.md`.
+`stream_specs_json` to the catalog, M6 added four columns to `exports` so a `balanced`
+subset can be replayed, and M7 replaced `Report.rule_counts` with a run-scoped and a cumulative
+view; all are reconciled in `docs/technical_design.md`.
 
 Only what a milestone needs gets built; do not scaffold ahead of the plan.
 
@@ -177,8 +194,11 @@ For layer placement, bounded contexts, and the port catalogue, load the `archite
 uv sync                                  # install
 uv run rdp run --source pusht            # ingest; --source is required, there is no all-sources mode
 uv run rdp export --budget 20000 --strategy balanced --seed 7 --out exports/subset.jsonl
-uv run rdp report
+uv run rdp report                            # latest run + cumulative, as a console table
+uv run rdp report --run <id> --format md     # plain stdout; redirect-safe
+uv run rdp report --cumulative               # the catalog alone, no run-scoped sections
 uv run rdp stats --out reports/qc_stats.md   # metric distributions behind every qc.yaml threshold
+uv run python scripts/check_report_consistency.py   # every reported number vs independent SQL
 
 uv run pytest                            # all tests
 uv run pytest tests/acceptance -q        # the two acceptance scenarios
@@ -198,8 +218,8 @@ Bug fixes and features are **regression-first**: write the failing test, watch i
 
 | Layer         | Count | Dependencies                                         | Budget |
 | ------------- | ----- | ---------------------------------------------------- | ------ |
-| `unit`        | 164   | none — domain only, all fakes                        | < 2 s  |
-| `integration` | 60    | real SQLite in tmpdir, real parquet, mini fixtures   | < 20 s |
+| `unit`        | 174   | none — domain only, all fakes                        | < 2 s  |
+| `integration` | 75    | real SQLite in tmpdir, real parquet, mini fixtures   | < 20 s |
 | `acceptance`  | 26    | in-process crash matrix + real subprocess `os._exit` | < 60 s |
 
 - Crash resume is tested through the `FaultInjector` port (a **production port created for
