@@ -21,12 +21,13 @@ fixed-width vector is wrong and is explicitly rejected by the design.
 
 ## Current State
 
-**M0 (spike) and M1 (walking skeleton) are complete. M2 is next: resume and idempotency.**
+**M0–M2 are complete. M3 is next: breadth — sources B (aloha) and C (RLDS/OXE).**
 
 `rdp run --source pusht && rdp export && rdp report` works end to end on real data, for source A
-only. A re-run correctly skips what is already committed; **crash resume is not implemented yet**
-— that is M2, together with `episode_state`, leases, staleness detection and the fault-injection
-matrix.
+only. **Both acceptance scenarios are green and machine-checked**: a crash at any of the eight
+checkpoints resumes to a byte-identical result, and a re-run on unchanged upstream writes
+nothing at all. `scripts/demo_crash_resume.sh` reproduces the reviewer's scenario with a real
+`kill -9`.
 
 ```
 docs/technical_design.md      # the design authority — domain model, schema, QC, layering
@@ -34,6 +35,7 @@ docs/implementation_plan.md   # milestones M0–M8, each with verification comma
 docs/adr/000..004             # M0's decisions: source selection, no-TF RLDS reader,
                               #   LeRobot v3.0 + lost termination, C's 8-D action, EPIC fps/IMU
 docs/adr/005..006             # M1's: pusht's synthesized clock, catalog schema + store layout
+docs/adr/007                  # M2's: resume, leases, and the honest crash criteria
 docs/assessment.md            # original requirements (Chinese)
 docs/assessment_for_ai.md     # requirements, agent-facing
 docs/ai_chat_sessions/*.json  # raw AI transcripts — archival, do not edit or translate
@@ -41,15 +43,16 @@ pyproject.toml                # uv project; `spike` dependency group is M0-only 
 config/{sources,embodiments,qc}.yaml   # sources, per-embodiment channel semantics, ruleset
 spikes/probe_*.py             # throwaway probes; _out/*.txt is their captured output
 src/rdp/{domain,application,infrastructure,interfaces}/
-tests/{unit,integration,fixtures}/     # 67 tests, ~0.5 s; domain coverage 97%
+tests/{unit,integration,acceptance,fakes,fixtures}/     # 114 tests, ~15 s; domain coverage 90%+
 scripts/make_fixtures.py      # regenerates the 39 KB committed pusht mini fixture
+scripts/demo_crash_resume.sh  # real kill -9 against a throwaway store under .demo/
 ```
 
-**Read `docs/adr/000`–`006` before touching an adapter.** M0 measured four things the design had
-guessed wrong and M1 a fifth; all are corrected in `docs/technical_design.md`.
+**Read `docs/adr/000`–`007` before touching an adapter or the resume logic.** M0 measured four
+things the design had guessed wrong, M1 a fifth, and M2 corrected one exit criterion that was
+physically unachievable as written; all are reconciled in `docs/technical_design.md`.
 
-Only what a milestone needs gets built. `tests/acceptance/` and `scripts/demo_crash_resume.sh`
-arrive in M2; do not scaffold ahead of the plan.
+Only what a milestone needs gets built; do not scaffold ahead of the plan.
 
 ## Prime Directive: the two acceptance scenarios
 
@@ -133,11 +136,11 @@ bash scripts/demo_crash_resume.sh        # real kill -9, reproduces the reviewer
 
 Bug fixes and features are **regression-first**: write the failing test, watch it fail, then fix.
 
-| Layer         | Count | Dependencies                                       | Budget |
-| ------------- | ----- | -------------------------------------------------- | ------ |
-| `unit`        | ~60   | none — domain only, all fakes                      | < 2 s  |
-| `integration` | ~15   | real SQLite in tmpdir, real parquet, mini fixtures | < 20 s |
-| `acceptance`  | 4–6   | real subprocess, real `kill -9`                    | < 60 s |
+| Layer         | Count | Dependencies                                         | Budget |
+| ------------- | ----- | ---------------------------------------------------- | ------ |
+| `unit`        | ~85   | none — domain only, all fakes                        | < 2 s  |
+| `integration` | ~5    | real SQLite in tmpdir, real parquet, mini fixtures   | < 20 s |
+| `acceptance`  | ~24   | in-process crash matrix + real subprocess `os._exit` | < 60 s |
 
 - Crash resume is tested through the `FaultInjector` port (a **production port created for
   testability**; the production implementation is a no-op). `pytest.mark.parametrize` covers all

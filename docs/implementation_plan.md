@@ -240,16 +240,32 @@ bash scripts/demo_crash_resume.sh           # real kill -9, prints a before/afte
 
 **Exit criteria** — each is a machine-checked assertion, not an eyeball check:
 
-- [ ] After a crash at any of the 8 checkpoints, `FakeSource.fetch` and `FakeSource.normalize`
-      call counts across both runs equal the counts from a single uninterrupted run.
-- [ ] Post-resume database state is **field-by-field identical** to the uninterrupted baseline:
+- [x] After a crash at any of the 8 checkpoints, **at most the single in-flight stage is
+      redone**, and never a stage the catalog recorded as complete. Six checkpoints cost nothing;
+      `fetch.after` costs one extra `FakeSource.fetch` and `normalize.after_write_before_commit`
+      one extra `FakeSource.normalize`, because those are exactly the windows the file-first
+      write order opens on purpose. The per-checkpoint cost is declared in a `REDONE` table and
+      asserted ([ADR 007](adr/007-m2-resume-leases-and-crash-criteria.md), decision 3).
+- [x] Post-resume database state is **field-by-field identical** to the uninterrupted baseline:
       full `episodes` table, full `qc_results` table, and per-file parquet content hashes.
-- [ ] `runs` has two rows; the second has non-null `resumed_from`.
-- [ ] Second run on unchanged upstream: `new_episodes == 0`, `episodes` row count unchanged,
+- [x] `runs` has two rows; the second has non-null `resumed_from`.
+- [x] Second run on unchanged upstream: `new_episodes == 0`, `episodes` row count unchanged,
       **every `updated_at` unchanged**.
-- [ ] Upstream gains one episode → exactly one episode is fetched and normalized.
-- [ ] Bumping `ruleset_version` alone re-runs QC and does **not** re-run fetch or normalize.
-- [ ] No orphan `*.tmp` files remain after any recovery pass.
+- [x] Upstream gains one episode → exactly one episode is fetched and normalized.
+- [x] Bumping `ruleset_version` alone re-runs QC and does **not** re-run fetch or normalize.
+      Bumping `adapter_version` re-normalizes and does **not** re-fetch.
+- [x] No orphan `*.tmp` files remain after any recovery pass, and a `NORMALIZED` episode whose
+      parquet no longer opens is demoted to `FETCHED` rather than exported.
+
+**Discovered during M2** (recorded in [ADR 007](adr/007-m2-resume-leases-and-crash-criteria.md)):
+
+1. The original call-count criterion above was unachievable at two of the eight checkpoints, and
+   correctly so — see decision 3. Amended rather than weakened.
+2. A pure TTL lease cannot be reclaimed by a restart one second after a `kill -9`, which is the
+   only interesting case. A lease is now reclaimable when the TTL has passed **or** when it names
+   our own single-writer slot (decision 4).
+3. A resume must not call `fetch` again: the `FETCHED` row is itself the receipt that the raw
+   bytes are staged, so the `RawEpisode` handle is reconstructed instead (decision 2).
 
 ---
 

@@ -479,8 +479,11 @@ Design notes:
 
 The authoritative DDL is `src/rdp/infrastructure/persistence/schema.sql` (`PRAGMA user_version`).
 Schema version 1 (M1) implements everything below except `stream_specs_json`, `episode_state`
-and the lease columns, which arrive with the sources and the resume logic that need them; see
-[ADR 006](adr/006-m1-catalog-schema-and-store-layout.md).
+and the lease columns; see [ADR 006](adr/006-m1-catalog-schema-and-store-layout.md). Schema
+version 2 (M2) adds `episode_state`, `episodes.ruleset_version` and `runs.resumed_from` — all
+additive, so an existing catalog is upgraded with `ALTER TABLE ... ADD COLUMN` rather than a
+migration script ([ADR 007](adr/007-m2-resume-leases-and-crash-criteria.md), decision 6).
+`stream_specs_json` still waits for source D, the first source with an own-timeline signal.
 
 ```sql
 sources(source_id PK, kind, uri, revision, shard_layout_revision, config_json, created_at)
@@ -502,12 +505,15 @@ episodes(
 )
 
 episode_state(episode_uid PK, stage, attempt, last_error, lease_owner, lease_expires_at, updated_at)
+  -- `stage` is the last *durably completed* stage, never one in progress. That is what makes
+  -- recovery rollback-free: a dead worker lost only work that was never recorded.
 
 qc_results(id PK, episode_uid, rule_id, verdict, metrics_json, reason, run_id,
            ruleset_version,   -- joint digest of rule code + qc.yaml thresholds
            UNIQUE(episode_uid, rule_id, run_id))
 
-runs(run_id PK, started_at, finished_at, status, args_json, stats_json)
+runs(run_id PK, started_at, finished_at, status, args_json, stats_json,
+     resumed_from)         -- non-null exactly when this run picked up an interrupted one
 
 exports(export_id PK, run_id, budget_frames, strategy, path, stats_json, created_at)
 ```
@@ -554,15 +560,32 @@ stale ⟺ the recorded (content_hash, schema_version, adapter_version, ruleset_v
 
 1. All artifacts are written to `*.tmp` and then renamed atomically with `os.replace()`; fsync the file first, then fsync the directory.
 2. File first, state second. A crash in between leaves the state at the previous stage, and the re-run overwrites the same tmp file — idempotent by construction.
-3. Run a **recovery pass** at startup: clean orphaned `*.tmp` files; demote `IN_PROGRESS` rows with an expired `lease_expires_at` back to the last stable stage; verify that `NORMALIZED` parquet files can be opened, and demote to `FETCHED` if not.
+3. Run a **recovery pass** at startup (`RecoverIncomplete`, unconditional — not behind a flag, because a flag that must be remembered after a crash will not be): close out `runs` rows with no `finished_at` as `INTERRUPTED` and record the newest one as the next run's `resumed_from`; clean orphaned `*.tmp` files; release leases that are reclaimable; verify that `NORMALIZED` and `QC_DONE` parquet files can be opened, and demote to `FETCHED` if not.
 
-**Test plan** (the documentation must state which faults were simulated and whether post-recovery behavior matched expectations):
+Note what recovery deliberately does **not** do: it never rolls a stage back merely because a stage was in flight. By iron rule 2 the recorded stage is the last durably completed one, so there is nothing to undo — only a lease to release.
 
-- `tests/test_resume.py`: use the `FAULT_INJECT=qc:after_n=3` environment variable to `os._exit(1)` after the third episode's QC; assert that after restart the `fetch`/`normalize` call counts are 0 (verified via a counter file, proving nothing was reprocessed) and that the final result is identical to an uninterrupted run (comparing a DB snapshot plus parquet checksums).
-- Cover three intermediate states: downloaded but not normalized, normalized but not QC'd, QC'd but not committed.
-- Cover "a second run finds nothing new": assert the second round has `new_episodes=0`, the `episodes` row count is unchanged, and `updated_at` is unchanged.
-- Cover "upstream added 1 episode": only the new one is processed.
-- Provide `scripts/demo_crash_resume.sh` to reproduce the reviewer's scenario in one command (a real `kill -9`, not a simulation).
+**A lease is reclaimable when its TTL has passed _or_ when it names our own worker slot.** One SQLite catalog admits one writer at a time (`BEGIN IMMEDIATE`) and `lease_owner` names a slot, not a process, so finding our own slot's lease at startup can only mean its previous holder died. The TTL is the predicate that survives the move to Postgres and per-worker owner ids (§10.2), where that assumption stops holding ([ADR 007](adr/007-m2-resume-leases-and-crash-criteria.md), decision 4).
+
+**A resume never re-fetches.** An episode recorded at `FETCHED` has its raw bytes staged by definition, so `IngestEpisodes` reconstructs the `RawEpisode` handle from `(ref, staging_dir, revision)` instead of calling `fetch` again. This is also why `REDO_NORMALIZE` rewinds to `FETCHED` rather than `DISCOVERED`.
+
+**The eight crash checkpoints** (`rdp.application.ingest_episodes.CHECKPOINTS`), which the acceptance matrix is parametrized over:
+
+```
+fetch.before   fetch.after   normalize.before   normalize.after_write_before_commit
+qc.before      qc.mid_rule   qc.after_episode_n commit.after_file_before_db
+```
+
+**What a crash costs.** At most the single stage that was in flight, and never a stage the catalog recorded as complete. Six of the eight checkpoints cost nothing at all; `fetch.after` costs one repeated `fetch` and `normalize.after_write_before_commit` one repeated `normalize`, because those are precisely the windows iron rule 2 opens on purpose. Redoing that one unit of work is correct: the alternative is trusting an artifact no transaction ever vouched for ([ADR 007](adr/007-m2-resume-leases-and-crash-criteria.md), decision 3).
+
+**Test plan, as built** — three mechanisms, each proving something the others cannot:
+
+- `tests/acceptance/test_resume.py` crashes the pipeline in-process at **every** one of the eight checkpoints (`Crash(BaseException)`, so the per-episode `except Exception` handler cannot turn it into a `FAILED` row) and asserts, against an uninterrupted baseline: the `FakeSource` call counts recorded in a **counter file on disk**, the full `episodes` and `qc_results` tables field by field, and a per-file sha256 of everything under `normalized/`.
+- `tests/acceptance/test_cli_crash.py` runs the real CLI in a subprocess with `FAULT_INJECT=<checkpoint>[:<occurrence>]`, which `os._exit(1)`s — no unwinding, no `finally`, no buffer flush — proving the _process_ leaves a recoverable state, which a raised exception cannot prove.
+- `scripts/demo_crash_resume.sh` sends a real external `kill -9` and prints a before/after diff of the catalog: the reviewer's literal scenario.
+- Intermediate states covered: fetched-not-normalized, normalized-not-QC'd, QC'd-not-committed — plus the two windows inside a stage.
+- "A second run finds nothing new": asserted as `skipped_already_processed == n`, every other counter zero, row count unchanged, and **every `updated_at` byte-identical** — the strong form, which only holds because the skip path writes nothing at all.
+- "Upstream added 1 episode": only the new one is fetched and normalized.
+- Staleness both ways: bumping `ruleset_version` re-runs QC only; bumping `adapter_version` re-normalizes without re-fetching.
 
 ---
 
