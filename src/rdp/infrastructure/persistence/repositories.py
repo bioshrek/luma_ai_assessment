@@ -98,6 +98,22 @@ class SqliteEpisodeRepository:
         ).fetchall()
         return {row[0]: row[1] for row in rows}
 
+    def corpus_totals(self) -> dict[str, float]:
+        row = self._conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(n_frames), 0), COALESCE(SUM(duration_s), 0.0) "
+            "FROM episodes WHERE status = ?",
+            (IngestionStage.COMMITTED.value,),
+        ).fetchone()
+        return {"episodes": int(row[0]), "frames": int(row[1]), "duration_s": float(row[2])}
+
+    def counts_by_source_embodiment(self) -> list[tuple[str, str, int, int]]:
+        rows = self._conn.execute(
+            "SELECT source_id, embodiment, COUNT(*), COALESCE(SUM(n_frames), 0) FROM episodes "
+            "WHERE status = ? GROUP BY source_id, embodiment ORDER BY source_id, embodiment",
+            (IngestionStage.COMMITTED.value,),
+        ).fetchall()
+        return [(row[0], row[1] or "", int(row[2]), int(row[3])) for row in rows]
+
 
 _STATE_COLUMNS = (
     "episode_uid, stage, attempt, last_error, lease_owner, lease_expires_at, updated_at"
@@ -144,8 +160,8 @@ class SqliteEpisodeStateRepository:
 # "what does the catalog think *now*" must read the newest row of each (episode, rule) pair, not
 # every row it has ever had. `rowid` breaks the tie inside one run, whose `created_at` is shared.
 _LATEST_QC = """
-    SELECT episode_uid, rule_id, verdict FROM (
-        SELECT episode_uid, rule_id, verdict, ROW_NUMBER() OVER (
+    SELECT episode_uid, rule_id, verdict, reason FROM (
+        SELECT episode_uid, rule_id, verdict, reason, ROW_NUMBER() OVER (
             PARTITION BY episode_uid, rule_id ORDER BY created_at DESC, rowid DESC
         ) AS recency FROM qc_results
     ) WHERE recency = 1
@@ -211,6 +227,25 @@ class SqliteQCResultRepository:
         out: dict[str, dict[str, int]] = {}
         for rule_id, verdict, count in self._conn.execute(sql, params).fetchall():
             out.setdefault(rule_id, {})[verdict] = count
+        return out
+
+    def skip_reason_counts(self, run_id: str | None = None) -> dict[str, dict[str, int]]:
+        # Grouped by `(rule_id, reason)` and never concatenated into one key: a rule that
+        # skipped because the episode has no action and a rule that skipped because the action
+        # is an episode label have not made the same observation (design §3).
+        if run_id:
+            sql = (
+                "SELECT rule_id, reason, COUNT(*) FROM qc_results "
+                "WHERE run_id = ? AND verdict = ?"
+            )
+            params: tuple[Any, ...] = (run_id, Verdict.SKIPPED.value)
+        else:
+            sql = f"SELECT rule_id, reason, COUNT(*) FROM ({_LATEST_QC}) WHERE verdict = ?"
+            params = (Verdict.SKIPPED.value,)
+        sql += " GROUP BY rule_id, reason ORDER BY rule_id, reason"
+        out: dict[str, dict[str, int]] = {}
+        for rule_id, reason, count in self._conn.execute(sql, params).fetchall():
+            out.setdefault(rule_id, {})[reason or "unspecified"] = count
         return out
 
     def metric_samples(self) -> list[tuple[str, str, str, float]]:

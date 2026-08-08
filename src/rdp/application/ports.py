@@ -88,6 +88,18 @@ class EpisodeRepository(Protocol):
 
     def counts_by_stage(self) -> dict[str, int]: ...
 
+    def corpus_totals(self) -> dict[str, float]:
+        """`episodes` / `frames` / `duration_s` over committed episodes only."""
+        ...
+
+    def counts_by_source_embodiment(self) -> list[tuple[str, str, int, int]]:
+        """`(source_id, embodiment, episodes, frames)` — the cross-tab, committed only.
+
+        Two axes because they are not the same axis: two sources can share an embodiment, and
+        M4's `epic100` is one source whose episodes differ in what they even contain.
+        """
+        ...
+
 
 class EpisodeStateRepository(Protocol):
     """The stage machine's scheduling row: attempt count and lease (design §4).
@@ -117,6 +129,10 @@ class QCResultRepository(Protocol):
         ...
 
     def verdict_counts(self, run_id: str | None = None) -> dict[str, dict[str, int]]: ...
+
+    def skip_reason_counts(self, run_id: str | None = None) -> dict[str, dict[str, int]]:
+        """`{rule_id: {reason: n}}` — why each rule declined to run, kept apart per reason."""
+        ...
 
     def metric_samples(self) -> list[tuple[str, str, str, float]]:
         """`(source_id, rule_id, metric, value)` for the latest verdict of every episode+rule.
@@ -225,6 +241,20 @@ class Clock(Protocol):
     def horizon_iso(self, seconds: float) -> str:
         """`now + seconds`. Lease arithmetic belongs to the clock, not to the domain."""
         ...
+
+    def monotonic(self) -> float:
+        """Seconds from an arbitrary origin, for measuring durations.
+
+        Separate from `now_iso` on purpose: wall time can step backwards, and a stage that
+        reported a negative duration would be reported as a bug in the pipeline.
+        """
+        ...
+
+
+class StoreInspector(Protocol):
+    """How much disk the store is using, by layer. Reporting only — nothing writes through it."""
+
+    def usage_bytes(self) -> dict[str, int]: ...
 
 
 class ArtifactMaintenance(Protocol):

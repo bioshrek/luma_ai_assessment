@@ -13,7 +13,6 @@ from rdp.domain.errors import BudgetTooSmall
 from rdp.domain.run import IngestionRun
 from rdp.infrastructure.storage.atomic_fs import atomic_write_text
 from rdp.interfaces.presenters.report_md import (
-    FileRunReporter,
     print_report,
     render_json,
     render_markdown,
@@ -77,18 +76,14 @@ def run(
         raise
 
     _finish(container, ingestion)
-    console.print(f"[green]run {ingestion.run_id} {ingestion.status}[/green]")
-    if ingestion.resumed_from:
-        console.print(f"  resumed from {ingestion.resumed_from}")
-    for name, value in sorted(ingestion.stats()["counters"].items()):
-        console.print(f"  {name:<28} {value}")
 
 
 def _finish(container: Container, ingestion: IngestionRun) -> None:
     with container.unit_of_work() as uow:
         uow.runs.finish(ingestion)
         uow.commit()
-    FileRunReporter(container.paths.reports).publish(ingestion)
+    for reporter in container.run_reporters():
+        reporter.publish(ingestion)
 
 
 @app.command()
@@ -135,30 +130,44 @@ def export(
 @app.command()
 def report(
     run_id: Annotated[
-        str | None, typer.Option("--run-id", help="Defaults to the latest run.")
+        str | None, typer.Option("--run", "--run-id", help="Defaults to the latest run.")
     ] = None,
+    cumulative: Annotated[
+        bool,
+        typer.Option("--cumulative", help="The catalog only, with no run scoped section."),
+    ] = False,
+    fmt: Annotated[
+        str, typer.Option("--format", help="table | md | json", case_sensitive=False)
+    ] = "table",
     out: Annotated[Path | None, typer.Option("--out", help="Also write markdown here.")] = None,
-    as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
     store: StoreOption = DEFAULT_STORE,
     config: ConfigOption = DEFAULT_CONFIG,
 ) -> None:
     """Summarise a run and the catalog. Recomputed from the database, never cached."""
+    if fmt.lower() not in {"table", "md", "json"}:
+        raise typer.BadParameter(f"unknown format {fmt!r}; expected table, md or json")
     container = Container(store=store, config=config)
-    result = container.report()(run_id)
-    if as_json:
-        console.print_json(render_json(result))
+    result = container.report()(run_id, cumulative_only=cumulative)
+    markdown = render_markdown(result)
+
+    if fmt.lower() == "json":
+        # Plain stdout, not a rich table: `rdp report --format json > x.json` must be valid JSON.
+        typer.echo(render_json(result))
+    elif fmt.lower() == "md":
+        typer.echo(markdown, nl=False)
     else:
         print_report(result, console)
 
-    markdown = render_markdown(result)
     if result.run is not None:
         # Sits next to the run's JSON, so a run is always documented in both forms.
         published = container.paths.reports / f"{result.run['run_id']}.md"
         atomic_write_text(published, markdown)
-        console.print(f"wrote {published}")
+        if fmt.lower() == "table":
+            console.print(f"wrote {published}")
     if out is not None:
         atomic_write_text(out, markdown)
-        console.print(f"wrote {out}")
+        if fmt.lower() == "table":
+            console.print(f"wrote {out}")
 
 
 @app.command()

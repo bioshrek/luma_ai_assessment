@@ -15,7 +15,8 @@ Two rules govern every branch below:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -120,8 +121,10 @@ class IngestEpisodes:
         episode, lease = claimed
         try:
             episode = self._fetch_and_normalize(episode, lease, ref, source, adapter, run)
-            episode = self._run_qc(episode, lease, run)
-            self._commit(episode, lease, run)
+            with self._timed(run, counters.QC):
+                episode = self._run_qc(episode, lease, run)
+            with self._timed(run, counters.COMMIT):
+                self._commit(episode, lease, run)
         except Exception as exc:  # one bad episode must not abort the run
             error = f"{type(exc).__name__}: {exc}"
             self._save(
@@ -131,6 +134,16 @@ class IngestEpisodes:
                 error=error,
             )
             run.record_failure(episode.uid, error)
+
+    @contextmanager
+    def _timed(self, run: IngestionRun, stage: str) -> Iterator[None]:
+        """Attribute wall time to a stage, including when it raises — a stage that failed slowly
+        is the one worth seeing."""
+        start = self.clock.monotonic()
+        try:
+            yield
+        finally:
+            run.record_stage(stage, self.clock.monotonic() - start)
 
     # -- claim -------------------------------------------------------------------------
 
@@ -218,7 +231,8 @@ class IngestEpisodes:
     ) -> Episode:
         if episode.stage is IngestionStage.DISCOVERED:
             self.faults.maybe_crash(FETCH_BEFORE)
-            adapter.fetch(ref, source, self._staging_dir(ref))
+            with self._timed(run, counters.FETCH):
+                adapter.fetch(ref, source, self._staging_dir(ref))
             self.faults.maybe_crash(FETCH_AFTER)
             episode = self._save(
                 episode.fetched(run_id=run.run_id, now=self.clock.now_iso()), lease
@@ -232,10 +246,12 @@ class IngestEpisodes:
         # would repeat a download the catalog has already accounted for.
         raw = RawEpisode(ref=ref, path=self._staging_dir(ref), upstream_revision=source.revision)
         self.faults.maybe_crash(NORMALIZE_BEFORE)
-        canonical = adapter.normalize(raw, source)
-        # File first, DB state second: a crash between the two leaves an orphan artifact that
-        # the next run overwrites with identical bytes. The reverse order would lose data.
-        frames_path = self.frame_store.write(canonical)
+        with self._timed(run, counters.NORMALIZE):
+            canonical = adapter.normalize(raw, source)
+            # File first, DB state second: a crash between the two leaves an orphan artifact
+            # that the next run overwrites with identical bytes. The reverse order would lose
+            # data.
+            frames_path = self.frame_store.write(canonical)
         self.faults.maybe_crash(NORMALIZE_AFTER_WRITE_BEFORE_COMMIT)
         episode = self._save(
             episode.normalized(

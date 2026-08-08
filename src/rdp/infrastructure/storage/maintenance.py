@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
+from rdp.infrastructure.persistence.catalog import CATALOG_FILE
 from rdp.infrastructure.storage.parquet_frame_store import FRAMES_FILE, ParquetFrameStore
 
 TEMP_SUFFIX = ".tmp"
@@ -42,3 +43,21 @@ class StoreMaintenance:
             return pq.ParquetFile(target).metadata is not None
         except Exception:
             return False
+
+    def usage_bytes(self) -> dict[str, int]:
+        """Bytes on disk per store layer, for the report.
+
+        Reported per layer because the layers are not equally expensive to lose: `raw/` is the
+        authoritative copy, while `normalized/` and `cache/` can be deleted and rebuilt.
+        """
+        usage = {name: _tree_bytes(self.root / name) for name in ("raw", "normalized", "cache")}
+        catalog = self.root / CATALOG_FILE
+        usage["catalog"] = catalog.stat().st_size if catalog.is_file() else 0
+        usage["total"] = sum(usage.values())
+        return usage
+
+
+def _tree_bytes(root: Path) -> int:
+    if not root.exists():
+        return 0
+    return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())

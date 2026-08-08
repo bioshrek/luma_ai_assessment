@@ -22,6 +22,8 @@ from rdp.infrastructure.persistence.repositories import (
 
 SCHEMA_USER_VERSION = 5
 
+CATALOG_FILE = "catalog.sqlite"
+
 # Every schema change so far has been additive, so an existing catalog is upgraded in place
 # instead of being rebuilt. `raw/` stays authoritative either way (design §2.4).
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (

@@ -14,7 +14,7 @@ from rdp.application.build_report import BuildReport
 from rdp.application.build_stats import BuildStats
 from rdp.application.export_subset import ExportSubset
 from rdp.application.ingest_episodes import IngestEpisodes
-from rdp.application.ports import SourcePort
+from rdp.application.ports import RunReporter, SourcePort
 from rdp.application.recover_incomplete import RecoverIncomplete
 from rdp.domain.embodiment import EmbodimentRegistry
 from rdp.domain.qc.rule import QCRule
@@ -22,7 +22,7 @@ from rdp.domain.source import Source
 from rdp.infrastructure.clock import SystemClock
 from rdp.infrastructure.config.loader import load_embodiments, load_rules, load_sources
 from rdp.infrastructure.faults import fault_injector_from_env
-from rdp.infrastructure.persistence.catalog import SqliteCatalog, SqliteUnitOfWork
+from rdp.infrastructure.persistence.catalog import CATALOG_FILE, SqliteCatalog, SqliteUnitOfWork
 from rdp.infrastructure.sources.epic_adapter import EpicKitchensAdapter
 from rdp.infrastructure.sources.lerobot_adapter import LeRobotAdapter
 from rdp.infrastructure.sources.rlds_adapter import RLDSAdapter
@@ -30,6 +30,11 @@ from rdp.infrastructure.sources.upstream_fetch import UpstreamFetcher
 from rdp.infrastructure.storage.jsonl_writer import JsonlSubsetWriter
 from rdp.infrastructure.storage.maintenance import StoreMaintenance
 from rdp.infrastructure.storage.parquet_frame_store import ParquetFrameStore
+from rdp.interfaces.presenters.report_md import (
+    ConsoleRunReporter,
+    FileRunReporter,
+    MarkdownRunReporter,
+)
 
 DEFAULT_STORE = Path("store")
 DEFAULT_CONFIG = Path("config")
@@ -44,7 +49,7 @@ class Paths:
 
     @property
     def catalog(self) -> Path:
-        return self.store / "catalog.sqlite"
+        return self.store / CATALOG_FILE
 
     @property
     def raw(self) -> Path:
@@ -154,7 +159,15 @@ class Container:
         )
 
     def report(self) -> BuildReport:
-        return BuildReport(uow_factory=self.unit_of_work)
+        return BuildReport(uow_factory=self.unit_of_work, store=self.maintenance)
+
+    def run_reporters(self) -> list[RunReporter]:
+        """Every sink a finished run is published to. Adding one is this list plus a class."""
+        return [
+            FileRunReporter(self.paths.reports),
+            MarkdownRunReporter(self.paths.reports),
+            ConsoleRunReporter(),
+        ]
 
     def stats(self) -> BuildStats:
         return BuildStats(uow_factory=self.unit_of_work)
