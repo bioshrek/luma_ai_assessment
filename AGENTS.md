@@ -9,12 +9,12 @@ control**, and **exports curated training subsets** — with crash-resumable, id
 The hard problem is **not** throughput. It is that the four sources disagree about what an
 "action" even is:
 
-| Source | Dataset                             | Format                 | Action semantics                                                       |
-| ------ | ----------------------------------- | ---------------------- | ---------------------------------------------------------------------- |
-| A      | `lerobot/pusht`                     | Parquet + MP4          | Absolute task-space xy, **in pixels**                                  |
-| B      | `lerobot/aloha_sim_insertion_human` | Parquet + MP4          | Absolute joint angles (rad) + gripper, 14-D dual-arm                   |
-| C      | OXE / RLDS (`berkeley_autolab_ur5`) | Nested TFRecord        | End-effector **delta** pose (m/rad) + absolute gripper + control flags |
-| D      | EPIC-KITCHENS-100                   | CSV + JSON + IMU + MP4 | **Episode-level symbolic label** `(verb, noun)` — no per-frame action  |
+| Source | Dataset                             | Format                 | Action semantics                                                                 |
+| ------ | ----------------------------------- | ---------------------- | -------------------------------------------------------------------------------- |
+| A      | `lerobot/pusht`                     | Parquet + MP4          | Absolute task-space xy, **in pixels**                                            |
+| B      | `lerobot/aloha_sim_insertion_human` | Parquet + MP4          | Absolute joint angles (rad) + gripper, 14-D dual-arm                             |
+| C      | OXE / RLDS (`berkeley_autolab_ur5`) | Nested TFRecord        | End-effector **delta** pose (m/rad) + ternary gripper change cmd + control flags |
+| D      | EPIC-KITCHENS-100                   | CSV + JSON + IMU + MP4 | **Episode-level symbolic label** `(verb, noun)` — no per-frame action            |
 
 So: **unify the structure, never the numbers.** Any instinct to squash everything into one
 fixed-width vector is wrong and is explicitly rejected by the design.

@@ -106,6 +106,69 @@ pusht 的两个 channel 上游叫 `motor_0` / `motor_1`，而它们**不是电�
 `Provenance` / `EpisodeBoundary` 和一张 `frames.parquet`；不统一的是**数值和单位**，
 它们连同各自的语义一起被原样保留。
 
+先看四个概念的从属和基数——`Channel` 是这条链的末端，也是 §2.2 的主角：
+
+```mermaid
+erDiagram
+  SOURCE      ||--o{ EPISODE     : "discover 列举；(source_id, upstream_id) 唯一"
+  EPISODE     ||--|| ACTION_SPEC : "落库快照 action_spec_json"
+  EPISODE     ||--|| STATE_SPEC  : "落库快照 state_spec_json"
+  EPISODE     ||--o{ STREAM_SPEC : "只有 clock=own_timeline 的信号才有"
+  EPISODE     ||--o{ FRAME       : "frames.parquet 的行"
+  ACTION_SPEC ||--o{ CHANNEL     : "0 个通道 = episode_label（源 D）"
+  STATE_SPEC  ||--o{ CHANNEL     : "同一个值对象"
+  STREAM_SPEC ||--o{ CHANNEL     : "落到 streams 目录下自己的 parquet"
+  CHANNEL     ||--|| COLUMN      : "1:1 对应一列 action.name / state.name"
+```
+
+四条不显然的关系，每一条都是一个决定：
+
+1. **`embodiment` 在 source 上声明，却在 episode 上落库。** `config/sources.yaml` 每个源写一个
+   `embodiment`，但 `episodes.embodiment` 是**每 episode 一列**——一个源将来混装多个本体，
+   不需要改 schema。这也是 [§5.2](#52-分层按-embodiment不按-source) 能按 embodiment 而不是按
+   source 分层的前提。
+2. **channel 的定义来自 `config/embodiments.yaml`，但每个 episode 存的是自己的一份快照**
+   （`action_spec_json` / `state_spec_json`）。配置不是真相，**落库的那一份才是**——否则改一次
+   配置就会追溯改写所有历史 episode 的语义（代价见 [§8.14](#814-改-embodimentsyaml-不会让已提交的-episode-变陈旧)）。
+3. **一个 channel 恰好对应 `frames.parquet` 的一列**，`raw.<字段>` 走另一册登记（不变式 12）。
+   所以上表里的"列宽"就是通道数，不是别的什么东西。
+4. **但不是每个 channel 都进 `frames.parquet`**：时钟不是帧时钟的走 `streams/`（[§2.5](#25-多时钟一个-episode-可以有不止一条时间轴)），
+   `episode_label` 的一列都没有。`Capabilities` 同理挂在 episode 上而不是 source 上
+   （[§2.6](#26-优雅降级capability-是-per-episode-的)）。
+
+一个 episode 内部长这样——所有的物理语义都落在最内层的 `Channel` 上：
+
+```
+Episode（唯一被统一的容器）
+├─ SignalSpec(action) ─┬─ level      per_frame_continuous / per_frame_discrete
+│                      │             / episode_label / absent
+│                      ├─ clock      frame | own_timeline
+│                      └─ channels[] ── role · space · unit · is_delta · frame
+│                                       origin · is_physical · metric_convertible · min/max
+├─ SignalSpec(state)     同一个值对象，只是 is_command=False
+├─ Capabilities          per-episode 的能力位（不是 per-source）
+├─ Provenance            上游修订号 · 时钟来源 · signal_origin · transforms
+├─ EpisodeBoundary       terminated / truncated / success + 谁有资格裁决
+├─ frames.parquet        走帧时钟的信号
+└─ streams/<id>.parquet  自带时钟的信号（不变式 17）
+```
+
+同一个结构，四种填法——这张表就是“统一结构、不统一数值”的全部含义：
+
+| `action` 的实例化    | A `pusht`      | B `aloha`               | C `berkeley_ur5`                        | D `epic100`         |
+| -------------------- | -------------- | ----------------------- | --------------------------------------- | ------------------- |
+| `level`              | 逐帧连续       | 逐帧连续                | 逐帧连续                                | **episode 级标签**  |
+| 列宽                 | 2              | 14                      | 8（7 物理 + 1 控制标志位）              | 0（`channels: []`） |
+| `channel.space`      | `cartesian_2d` | 12 关节位置 + 2 夹爪    | 3 位置增量 + 3 姿态增量 + 夹爪 + `flag` | `(verb, noun)`      |
+| `channel.unit`       | `px`           | `rad` × 12 + 归一化 × 2 | `m` × 3 + `rad` × 3 + 归一化            | 无（符号量）        |
+| `channel.is_delta`   | 全 false       | 全 false                | **7 个物理通道全 true**                 | —                   |
+| `metric_convertible` | 全 false       | 12 true / 2 false       | 6 true / 2 false                        | —                   |
+| 额外时间轴           | 无             | 无                      | 无                                      | `accel` + `gyro`    |
+
+表里没有任何一行是可以跨列相加的，这就是拒绝定长向量的全部理由。各字段的完整定义在
+[technical_design §2.2](technical_design.md)，这里不再抄一遍——同一个断言存两份，
+正是这个项目最想避免的漂移。
+
 ### 2.2 语义挂在 channel 上，不挂在 spec 上
 
 这是被源 C 单独逼出来的结论。`unit` / `space` / `is_delta` / `frame` / `origin` /
@@ -115,7 +178,9 @@ UR5 的一个 action 向量里同时有
 
 - 3 维末端位置**增量**（m），
 - 3 维姿态**增量**（rad），
-- 1 维夹爪**绝对**指令，
+- 1 维夹爪的**三值变化指令**（`-1=开 / 0=不变 / +1=合`）——它也是 delta，和 B 的夹爪
+  **绝对**开度处在同一个 `role` 下却有相反的 `is_delta`，见
+  [ADR 003](adr/003-oxe-action-vector-is-8d.md)，
 - 1 维 `terminate_episode` **控制标志位**（根本不是物理量）。
 
 任何"这个 spec 是 delta 的"或"这个 spec 单位是 m"的说法在这里都是错的。`is_physical`
@@ -194,6 +259,44 @@ EPIC 的陀螺仪和加速度计是**两条流、两个时钟**（见 [ADR 012](
 
 推论是 `raw/` **权威且不可变**，`normalized/` **派生且可丢弃**。所以 schema 变更是一次
 **定向重规范化，永远不是一个 migration 脚本**。
+
+### 2.9 schema 不可能一次就设计对——所以要保证的是"改得起"
+
+上面 2.2 到 2.6 的每一条结论，**没有一条是第一版写对的**：源 B 把 `gripper` 从 spec 级
+推到了 channel 级，源 C 把 `unit` / `is_delta` 整体推到 channel 级并逼出了
+`euler_rpy`，源 D 逼出了 `stream_specs` / `Channel.origin` / per-episode 的
+`Capabilities`，而 M5 才发现 `stream_specs` 从头到尾**没有被持久化过**。
+如果安全性依赖"一次想对"，这个项目已经失败了四次。
+
+所以真正要交付的不是一个正确的 schema，而是一套**让 schema 可以安全迭代的工程约束**
+（技术设计 §8.7 的四条机制，这里给的是它们在本仓库里的实际战绩）：
+
+1. **变更路径就是日常摄取路径。** schema 版本号是陈旧判据四元组的一部分
+   （[§3.5](#35-陈旧是一个统一谓词而且不只看上游)），所以"上游变了"和"我们变了"共用同一条
+   幂等状态机：bump `schema_version` / `adapter_version` → REDO_NORMALIZE（不重新下载），
+   bump `ruleset_version` → REDO_QC（不重新规范化）。**"一次性 migration 脚本"这个物种在
+   这里不存在。**
+2. **表达不了的先进逃生舱，证据够了再升成一等字段。** `raw_extra`（episode 级）、
+   `raw.<列>`（帧级）、`unknown`（语义未知但数值保留）。所以"这个字段还没想好"从来不等于
+   "这份数据丢了"，升级它只是又一次重规范化。源 D 的 `level: episode_label` 走的正是这条路。
+   反面纪律同样重要：**绝不为了"以后好改"把 schema 泛化成 EAV / 无边界的 `extensions`**——
+   那等于把校验推迟到运行时，schema 就只剩一个名字。
+3. **catalog 的演进是加列，不是重建。** `PRAGMA user_version` 从 2 走到 5，九个
+   `ALTER TABLE ADD COLUMN`（`ruleset_version` / `segment_json` / `termination_column` /
+   `stream_specs_json` / 四个 `exports` 列……），**零 migration 脚本、零重建**。大 JSON 列
+   （`*_json`）让大部分演进天然是加性的。
+4. **每次改动留下两样可复核的东西：一条 ADR，和一次 golden diff。** 特征化测试的 golden
+   文件是 schema 的**可执行快照**——评审时看到的是"pusht 第 2 列从 X 变成 Y"这样的领域事实，
+   而不是一段代码 diff。ADR 000–017 就是这条链的全部历史。
+
+这套机制自己也交过学费，而且是最有说服力的一次：`stream_specs` 在 M4 声明在实体上却没写进
+catalog，**只有在第一次 ruleset bump 触发 REDO_QC 时才会暴露**——60 个 epic episode 当场
+炸掉 40 个（[ADR 015](adr/015-qc-episode-facts-and-persisted-streams.md)）。由此得到的纪律是：
+**聚合的每一个字段都必须持久化，并且测往返，而不是测写入。** 一个只在"改 schema 的那一天"
+才会现形的缺陷，恰恰说明"能安全迭代"这件事本身也必须被测试。
+
+诚实的边界写在 [§8.14](#814-改-embodimentsyaml-不会让已提交的-episode-变陈旧)：这条链上还有
+一环没有自动化——改 `config/embodiments.yaml` 不会自动让已提交的 episode 变陈旧。
 
 ---
 
@@ -744,3 +847,15 @@ join（[ADR 010](adr/010-epic-two-frame-numberings.md)）。
 ### 8.13 崩溃恢复的证据边界
 
 见 [§4.6](#46-一个不舒服但必须承认的事)：没有被埋检查点的地方，我们没有证据。
+
+### 8.14 改 `embodiments.yaml` 不会让已提交的 episode 变陈旧
+
+陈旧判据的四元组是 `(content_hash, schema_version, adapter_version, ruleset_version)`
+（[§3.5](#35-陈旧是一个统一谓词而且不只看上游)），里面**没有 `config/embodiments.yaml` 的摘要**，
+而 `adapter_version` 是各适配器里的一个**手写常量**（`lerobot@1.2.0` / `rlds@1.1.0` /
+`epic@1.2.0`）。后果是：改了某个 channel 的 `unit`、`is_delta` 或 `role` 之后，已提交的
+episode 仍然带着旧的 `action_spec_json`，必须**手工** bump 那个常量才会触发 REDO_NORMALIZE。
+
+这是 [§2.1](#21-核心主张) 那条"配置不是真相，落库的那份才是"的链路上，唯一没有被自动守住的
+一环。没有顺手做成"对整个文件取摘要"，是因为那样一处注释改动就会引发全量重规范化；正确的做法
+是**按 embodiment 分段取摘要**并让它进入 `adapter_version`，本轮没有做。
