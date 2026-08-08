@@ -665,11 +665,18 @@ python scripts/check_report_consistency.py   # report numbers vs direct SQL aggr
 
 **Verification**
 
+The toolchain is `uv` and nothing else — no `make`, so there is no second place a command can
+be spelled and go stale. The README states the same commands verbatim.
+
 ```bash
 git clone <repo> /tmp/fresh && cd /tmp/fresh
-make setup && make demo        # end-to-end: run, kill, resume, re-run, export, report
+uv sync
+uv run rdp run --source pusht          # ingest
+bash scripts/demo_crash_resume.sh      # run, kill -9, resume, re-run
+uv run rdp export --budget 20000 --strategy balanced --seed 7 --out exports/subset.jsonl
+uv run rdp report
 grep -rn "/Users/" --include="*.py" --include="*.yaml" --include="*.md" . | grep -v docs/ai
-pytest -q
+uv run pytest -q
 ```
 
 **Exit criteria**

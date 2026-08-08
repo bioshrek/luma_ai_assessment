@@ -103,6 +103,8 @@ docs/adr/017                  # M7's: one statistical vocabulary, measured vs de
 docs/assessment.md            # original requirements (Chinese)
 docs/assessment_for_ai.md     # requirements, agent-facing
 docs/ai_chat_sessions/*.json  # raw AI transcripts — archival, do not edit or translate
+docs/ai/session_*.md          # the same transcripts rendered readable; derived, never hand-edited
+docs/ai/rejected.md           # the AI suggestions that were rejected; hand-written, Chinese
 pyproject.toml                # uv project; `spike` dependency group is M0-only and throwaway
 config/{sources,embodiments,qc}.yaml   # sources, per-embodiment channel semantics, ruleset
                               #   every qc.yaml threshold cites the measurement it came from
@@ -112,6 +114,7 @@ src/rdp/{domain,application,infrastructure,interfaces}/
 tests/{unit,integration,acceptance,fakes,fixtures}/     # 275 tests; domain coverage 97.5%
 scripts/make_fixtures.py      # regenerates the four mini fixtures (~505 KB total)
 scripts/check_report_consistency.py   # every reported number re-derived by independent SQL
+scripts/render_ai_sessions.py # regenerates docs/ai/ from the raw chat exports
 scripts/demo_crash_resume.sh  # real kill -9 against a throwaway store under .demo/
 ```
 
@@ -199,6 +202,7 @@ uv run rdp report --run <id> --format md     # plain stdout; redirect-safe
 uv run rdp report --cumulative               # the catalog alone, no run-scoped sections
 uv run rdp stats --out reports/qc_stats.md   # metric distributions behind every qc.yaml threshold
 uv run python scripts/check_report_consistency.py   # every reported number vs independent SQL
+uv run python scripts/render_ai_sessions.py         # docs/ai/ from the raw chat exports; --check
 
 uv run pytest                            # all tests
 uv run pytest tests/acceptance -q        # the two acceptance scenarios
@@ -238,9 +242,13 @@ Bug fixes and features are **regression-first**: write the failing test, watch i
 
 ## Conventions
 
-- **Everything in this repo is written in English** — code, comments, docs, commit messages, CLI
-  output. The one exception is `docs/assessment.md` and `docs/ai_chat_sessions/*.json`, which are
-  archival originals and stay as-is.
+- **Delivery documents are Chinese; the engineering record is English** ([ADR 018](docs/adr/018-delivery-docs-in-chinese.md)).
+  Chinese: `README.md`, `docs/design_answers_zh.md`, the generated chrome of `docs/ai/index.md`.
+  English: `docs/technical_design.md`, `docs/implementation_plan.md`, every ADR, `AGENTS.md`,
+  the skills, and all code, comments, commit messages, CLI output and test names. There is no
+  parallel translation of any file in either direction — two copies of one claim is the drift
+  failure mode. `docs/assessment.md` and `docs/ai_chat_sessions/*.json` are archival originals
+  and stay as-is; quoted prompts are never translated.
 - **Ubiquitous language, no synonym drift.** It is an `Episode` — never `trajectory`, `demo`, or
   `rollout`. The full term table is design §8.1 and it governs code, DB columns, docs, and CLI
   output alike.
