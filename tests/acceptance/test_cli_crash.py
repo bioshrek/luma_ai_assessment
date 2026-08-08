@@ -29,7 +29,7 @@ def _workspace(tmp_path: Path) -> Path:
     config = tmp_path / "config"
     config.mkdir(parents=True, exist_ok=True)
     fixture = REPO / "tests/fixtures/lerobot_pusht_mini"
-    (config / "sources.yaml").write_text(_SOURCES.format(uri=fixture))
+    (config / "sources.yaml").write_text(_SOURCES.format(pusht=fixture))
     for name in ("embodiments.yaml", "qc.yaml"):
         shutil.copy(REPO / "config" / name, config / name)
     return config

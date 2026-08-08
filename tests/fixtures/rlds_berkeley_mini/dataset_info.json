@@ -1,0 +1,24 @@
+{
+  "citation": "@misc{BerkeleyUR5Website,\n  title = {Berkeley {UR5} Demonstration Dataset},\n  author = {Lawrence Yunliang Chen and Simeon Adebola and Ken Goldberg},\n  howpublished = {https://sites.google.com/view/berkeley-ur5/home},\n}",
+  "description": "UR5 performing cloth manipulation, pick place etc tasks",
+  "fileFormat": "tfrecord",
+  "location": {
+    "urls": [
+      "https://sites.google.com/view/berkeley-ur5/home"
+    ]
+  },
+  "moduleName": "tensorflow_datasets.robotics.rtx.rtx",
+  "name": "berkeley_autolab_ur5",
+  "releaseNotes": {
+    "0.1.0": "Initial release."
+  },
+  "splits": [
+    {
+      "name": "train",
+      "shardLengths": [
+        "2"
+      ]
+    }
+  ],
+  "version": "0.1.0"
+}
