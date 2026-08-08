@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from tests.factories import frames, meta, provenance, spec
+from tests.factories import frames, meta, provenance, spec, xy_channels
 
-from rdp.domain.action_spec import SignalLevel
+from rdp.domain.action_spec import SignalClock, SignalLevel, SignalSpec
 from rdp.domain.boundary import EndReason, EpisodeBoundary, SuccessAdjudicator, TerminationSource
 from rdp.domain.capabilities import Capabilities
 from rdp.domain.episode import CanonicalEpisode, Episode, EpisodeMeta
@@ -112,6 +112,66 @@ def test_content_hash_tracks_the_numbers() -> None:
     columns["state.ee.y"] = np.zeros(4)
     b = CanonicalEpisode(meta=meta(), frames=FrameTable(columns=columns))
     assert a.content_hash() != b.content_hash()
+
+
+# -- invariant 17: a signal on its own clock is a stream, not extra columns --------------------
+
+
+def _imu_spec(clock: SignalClock = SignalClock.OWN_TIMELINE) -> SignalSpec:
+    return SignalSpec(
+        is_command=False,
+        level=SignalLevel.PER_FRAME_CONTINUOUS,
+        channels=xy_channels(),
+        clock=clock,
+    )
+
+
+def _imu_table(n: int = 9, dt: float = 0.025) -> FrameTable:
+    t = np.arange(n, dtype=np.float64) * dt
+    return FrameTable(columns={"t": t, "state.ee.x": t, "state.ee.y": t})
+
+
+def test_a_stream_must_declare_that_it_runs_on_its_own_clock() -> None:
+    with pytest.raises(InvariantViolation, match="invariant 17"):
+        meta(stream_specs={"imu": _imu_spec(clock=SignalClock.FRAME)})
+
+
+def test_a_stream_table_is_checked_against_its_declared_channels() -> None:
+    declared = meta(stream_specs={"imu": _imu_spec()})
+    with pytest.raises(InvariantViolation, match="imu"):
+        CanonicalEpisode(
+            meta=declared,
+            frames=frames(),
+            streams={"imu": FrameTable(columns={"t": np.zeros(3)})},
+        )
+
+
+def test_a_stream_that_nobody_declared_is_refused() -> None:
+    with pytest.raises(InvariantViolation, match="imu"):
+        CanonicalEpisode(meta=meta(), frames=frames(), streams={"imu": _imu_table()})
+
+
+def test_a_stream_runs_at_its_own_rate_and_does_not_touch_the_frame_count() -> None:
+    episode = CanonicalEpisode(
+        meta=meta(stream_specs={"imu": _imu_spec()}), frames=frames(), streams={"imu": _imu_table()}
+    )
+    assert episode.streams["imu"].n_frames == 9
+    assert episode.frames.n_frames == 4
+
+
+def test_a_stream_widens_the_content_hash_without_disturbing_episodes_that_have_none() -> None:
+    """Sources A-C must keep the byte-identical hashes they had before streams existed."""
+    plain = CanonicalEpisode(meta=meta(), frames=frames())
+    assert plain.content_hash() == CanonicalEpisode(meta=meta(), frames=frames()).content_hash()
+
+    declared = meta(stream_specs={"imu": _imu_spec()})
+    with_stream = CanonicalEpisode(
+        meta=declared, frames=frames(), streams={"imu": _imu_table()}
+    )
+    other = CanonicalEpisode(
+        meta=declared, frames=frames(), streams={"imu": _imu_table(dt=0.05)}
+    )
+    assert with_stream.content_hash() not in (plain.content_hash(), other.content_hash())
 
 
 def test_episode_lifecycle_records_the_run_that_touched_it() -> None:

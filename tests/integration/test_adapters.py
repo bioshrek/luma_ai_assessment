@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 from tests.conftest import _ALOHA, _PUSHT, _RLDS, WorkspaceFactory
 
@@ -152,6 +153,24 @@ def test_aloha_has_one_top_camera_and_a_task(aloha: list[CanonicalEpisode]) -> N
     assert meta.cameras[0].encoding is CameraEncoding.MP4_SIDECAR
     assert meta.task == "Insert the peg into the socket."
     assert meta.n_frames == 500
+
+
+def test_an_episode_in_the_second_data_file_is_read_from_the_right_rows(
+    aloha: list[CanonicalEpisode],
+) -> None:
+    """`dataset_from_index` counts the whole dataset; a shard only holds its own rows.
+
+    Using it as a slice position works by coincidence for `file-000` and silently reads past
+    the end of every other file. Real `aloha_sim_insertion` puts episodes 15+ in `file-001`,
+    and a full run lost 35 of 50 episodes to it; the fixture now has the same two-file shape.
+    """
+    second = aloha[1]
+    assert second.meta.upstream_id == "episode_000001"
+    assert second.meta.n_frames == 500
+    assert second.frames.column("action.left.waist").shape == (500,)
+    assert not np.array_equal(
+        second.frames.column("action.left.waist"), aloha[0].frames.column("action.left.waist")
+    )
 
 
 # -- C: berkeley_autolab_ur5 -----------------------------------------------------------------

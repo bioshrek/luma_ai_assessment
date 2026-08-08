@@ -14,6 +14,7 @@ REPO = Path(__file__).resolve().parents[1]
 FIXTURE = REPO / "tests/fixtures/lerobot_pusht_mini"
 ALOHA_FIXTURE = REPO / "tests/fixtures/lerobot_aloha_mini"
 RLDS_FIXTURE = REPO / "tests/fixtures/rlds_berkeley_mini"
+EPIC_FIXTURE = REPO / "tests/fixtures/epic_kitchens_mini"
 
 _HEADER = """
 version: 1
@@ -56,6 +57,28 @@ _RLDS = """  - source_id: berkeley_ur5
 
 _SOURCES = _HEADER + _PUSHT
 
+# The three layers point at three subdirectories of one fixture, exactly as they point at three
+# different servers in production. Layer availability is therefore a real filesystem fact here,
+# not a stub: `P01_01` has neither pose nor IMU, `P01_103` has IMU, `P28_101` has both.
+_EPIC = """  - source_id: epic100
+    kind: epic_kitchens
+    uri: {epic}/annotations
+    revision: master
+    embodiment: human_ego
+    license: cc-by-nc-4.0
+    max_episodes: 6
+    layers: [annotations, camera_pose, imu]
+    camera_pose_uri: {epic}/camera_pose
+    imu_uri: {epic}/imu
+    frame_extraction_fps:
+      when_official_fps_is_50: 50
+      otherwise: 60
+    videos:
+      - P01_01
+      - P01_103
+      - P28_101
+"""
+
 WorkspaceFactory = Callable[..., Container]
 
 
@@ -79,6 +102,7 @@ def make_workspace(tmp_path: Path) -> Iterator[WorkspaceFactory]:
                 pusht=FIXTURE,
                 aloha=ALOHA_FIXTURE,
                 rlds=RLDS_FIXTURE,
+                epic=EPIC_FIXTURE,
                 layout=layout or "train:1-shards@0.1.0",
             )
         )

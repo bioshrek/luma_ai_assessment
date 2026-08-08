@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
 import numpy as np
 
 from rdp.domain.action_spec import (
@@ -9,6 +11,8 @@ from rdp.domain.action_spec import (
     ChannelRole,
     ChannelSpace,
     ReferenceFrame,
+    RotationRepr,
+    RotationSpec,
     SignalLevel,
     SignalOrigin,
     SignalSpec,
@@ -36,6 +40,44 @@ def xy_channels() -> tuple[Channel, ...]:
         )
         for axis in ("x", "y")
     )
+
+
+def pose_channels() -> tuple[Channel, ...]:
+    """A camera pose the way source D declares it: estimated, unitless, not metric."""
+    translation = tuple(
+        Channel(
+            name=f"cam_t.{axis}",
+            role=ChannelRole.HEAD,
+            space=ChannelSpace.CAMERA_TRANSLATION_ABS,
+            origin=SignalOrigin.ESTIMATED,
+            is_delta=False,
+            is_physical=True,
+            unit=None,
+            metric_convertible=False,
+            frame=ReferenceFrame.WORLD,
+            group="cam_t",
+        )
+        for axis in ("x", "y", "z")
+    )
+    rotation = tuple(
+        Channel(
+            name=f"cam_q.{axis}",
+            role=ChannelRole.HEAD,
+            space=ChannelSpace.CAMERA_ROTATION_ABS,
+            origin=SignalOrigin.ESTIMATED,
+            is_delta=False,
+            is_physical=True,
+            unit=None,
+            metric_convertible=False,
+            frame=ReferenceFrame.WORLD,
+            rotation=RotationSpec(repr=RotationRepr.QUAT_WXYZ),
+            group="cam_q",
+            min=-1.0,
+            max=1.0,
+        )
+        for axis in ("w", "x", "y", "z")
+    )
+    return translation + rotation
 
 
 def spec(
@@ -86,6 +128,9 @@ def meta(
     timestamp_source: str = "real",
     action_level: SignalLevel = SignalLevel.PER_FRAME_CONTINUOUS,
     source_id: str = "pusht",
+    state_spec: SignalSpec | None = None,
+    capabilities: Capabilities | None = None,
+    stream_specs: Mapping[str, SignalSpec] | None = None,
 ) -> EpisodeMeta:
     return EpisodeMeta(
         uid=make_uid(source_id, upstream_id),
@@ -94,11 +139,38 @@ def meta(
         embodiment="pusht_planar",
         n_frames=n_frames,
         action_spec=spec(is_command=True, level=action_level),
-        state_spec=spec(is_command=False),
-        capabilities=Capabilities(
-            has_action=action_level != SignalLevel.ABSENT, has_state=True
-        ),
+        state_spec=state_spec or spec(is_command=False),
+        stream_specs=dict(stream_specs or {}),
+        capabilities=capabilities
+        or Capabilities(has_action=action_level != SignalLevel.ABSENT, has_state=True),
         provenance=provenance(timestamp_source),
         boundary=boundary(),
         fps_nominal=10.0,
     )
+
+
+def pose_meta(n_frames: int = 4) -> EpisodeMeta:
+    """An episode shaped like source D: a label for an action, an estimated pose for a state."""
+    return meta(
+        n_frames=n_frames,
+        source_id="epic100",
+        action_level=SignalLevel.EPISODE_LABEL,
+        state_spec=SignalSpec(
+            is_command=False,
+            level=SignalLevel.PER_FRAME_CONTINUOUS,
+            channels=pose_channels(),
+        ),
+        capabilities=Capabilities(
+            has_action=True, has_state=True, has_camera_pose=True, has_rgb=False
+        ),
+    )
+
+
+def pose_frames(registered: Sequence[bool], dt: float = 0.1) -> FrameTable:
+    """A pose table where unregistered frames are NaN — never 0, which is a place."""
+    n = len(registered)
+    values = np.where(np.asarray(registered), 0.5, np.nan)
+    columns: dict[str, np.ndarray] = {"t": np.arange(n, dtype=np.float64) * dt}
+    for channel in pose_channels():
+        columns[f"state.{channel.name}"] = values.astype(np.float64)
+    return FrameTable(columns=columns)

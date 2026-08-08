@@ -1,0 +1,7 @@
+narration_id,participant_id,video_id,narration_timestamp,start_timestamp,stop_timestamp,start_frame,stop_frame,narration,verb,verb_class,noun,noun_class,all_nouns,all_noun_classes
+P01_01_0,P01,P01_01,00:00:01.089,00:00:00.14,00:00:03.37,8,202,open door,open,3,door,3,['door'],[3]
+P01_01_1,P01,P01_01,00:00:02.629,00:00:04.37,00:00:06.17,262,370,turn on light,turn-on,6,light,114,['light'],[114]
+P01_103_0,P01,P01_103,00:00:02.103,00:00:01.43,00:00:04.83,71,241,close door,close,4,door,3,['door'],[3]
+P01_103_1,P01,P01_103,00:00:07.615,00:00:07.34,00:00:08.75,367,437,pick up plate,pick-up,0,plate,2,['plate'],[2]
+P28_101_0,P28,P28_101,00:00:02.152,00:00:02.39,00:00:03.46,119,173,open cupboard,open,3,cupboard,3,['cupboard'],[3]
+P28_101_43,P28,P28_101,00:03:32.902,00:03:33.99,00:03:34.93,10699,10746,throw away trash,throw,13,trash,54,['trash'],[54]

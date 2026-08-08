@@ -14,7 +14,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from rdp.domain.errors import BudgetTooSmall
-from rdp.domain.qc.rule import EpisodeVerdict, Verdict
+from rdp.domain.qc.rule import EpisodeVerdict, RuleResult, Verdict
 from rdp.domain.run import IngestionRun
 from rdp.domain.stage import IngestionStage
 from rdp.interfaces.wiring import Container
@@ -145,3 +145,30 @@ def test_report_summarises_the_last_run(ingested: Container) -> None:
     assert report.run is not None
     assert report.stage_counts == {"COMMITTED": 3}
     assert report.rule_counts["TS_MONOTONIC"]["SKIPPED"] == 3
+
+
+def test_the_report_counts_each_episode_once_after_a_re_qc(ingested: Container) -> None:
+    """`qc_results` keeps one row per run — the catalog-wide view is the latest, not the sum.
+
+    Real data caught this: 202 committed episodes reported 325 `TS_MONOTONIC` verdicts, because
+    a ruleset bump had re-QC'd some of them and the report added the two runs together.
+    """
+    with ingested.unit_of_work() as uow:
+        uow.qc_results.record(
+            "pusht:episode_000000",
+            "run_2",
+            [RuleResult(rule_id="TS_MONOTONIC", verdict=Verdict.PASS, reason="re-qc")],
+        )
+        uow.commit()
+
+    report = ingested.report()()
+    assert report.rule_counts["TS_MONOTONIC"] == {
+        Verdict.PASS.value: 1,
+        Verdict.SKIPPED.value: 2,
+    }
+    with ingested.unit_of_work() as uow:
+        # Scoped to one run it is that run's verdicts, unchanged.
+        assert uow.qc_results.verdict_counts("run_1")["TS_MONOTONIC"] == {
+            Verdict.SKIPPED.value: 3
+        }
+
