@@ -21,6 +21,8 @@ config/sources.local.yaml
 store/
 exports/
 reports/
+# Throwaway store used by scripts/demo_crash_resume.sh
+.demo/
 
 # M0 spike downloads (the scripts and their captured output are kept; the data is not)
 spikes/_data/

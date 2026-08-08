@@ -85,10 +85,11 @@ def meta(
     upstream_id: str = "episode_000000",
     timestamp_source: str = "real",
     action_level: SignalLevel = SignalLevel.PER_FRAME_CONTINUOUS,
+    source_id: str = "pusht",
 ) -> EpisodeMeta:
     return EpisodeMeta(
-        uid=make_uid("pusht", upstream_id),
-        source_id="pusht",
+        uid=make_uid(source_id, upstream_id),
+        source_id=source_id,
         upstream_id=upstream_id,
         embodiment="pusht_planar",
         n_frames=n_frames,
