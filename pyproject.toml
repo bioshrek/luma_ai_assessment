@@ -12,6 +12,9 @@ dependencies = [
     "typer>=0.12",
 ]
 
+[project.scripts]
+rdp = "rdp.interfaces.cli:app"
+
 [dependency-groups]
 dev = [
     "import-linter>=2.0",
@@ -52,6 +55,44 @@ python_version = "3.12"
 strict = true
 files = ["src/rdp"]
 
+# pyarrow ships no py.typed marker.
+[[tool.mypy.overrides]]
+module = ["pyarrow.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+pythonpath = ["."]
+
+# The dependency rule, enforced rather than documented. An unchecked layering convention decays
+# within a week.
+[tool.importlinter]
+root_package = "rdp"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Clean Architecture layers point inward"
+type = "layers"
+layers = ["rdp.interfaces", "rdp.infrastructure", "rdp.application", "rdp.domain"]
+
+[[tool.importlinter.contracts]]
+name = "domain does no IO"
+type = "forbidden"
+source_modules = ["rdp.domain"]
+forbidden_modules = [
+    "sqlite3",
+    "pyarrow",
+    "urllib",
+    "typer",
+    "yaml",
+    "rich",
+    "tensorflow",
+    "h5py",
+]
+
+[[tool.importlinter.contracts]]
+name = "application depends on ports, not adapters"
+type = "forbidden"
+source_modules = ["rdp.application"]
+forbidden_modules = ["rdp.infrastructure", "rdp.interfaces", "sqlite3", "pyarrow", "yaml"]

@@ -1,0 +1,72 @@
+# What each channel of each embodiment actually means.
+#
+# Upstream field names are not evidence. pusht ships its two channels as `motor_0` / `motor_1`
+# under a `motors` key; they are neither motors nor joints — they are the x and y of a planar
+# end effector, in PIXELS of a 512x512 simulator canvas. The truth is asserted here, and the
+# adapter maps upstream columns onto these channels positionally after asserting the width.
+
+version: 1
+
+embodiments:
+  pusht_planar:
+    description: >-
+      PushT: a 2D planar pusher in a 512x512 pixel simulator canvas. Not an arm, no gripper,
+      no joints. Action is the absolute target position of the pusher tip.
+    is_real_robot: false
+    is_teleop: true # human demonstrations collected through a pointer device
+
+    action:
+      level: per_frame_continuous
+      channels:
+        - name: ee.x
+          role: end_effector
+          space: cartesian_2d
+          origin: measured
+          is_delta: false # absolute target position, not a displacement
+          is_physical: true
+          unit: px # NOT metres: there is no published pixel-to-metre scale
+          metric_convertible: false
+          frame: world
+          group: ee_xy
+          min: 0.0
+          max: 512.0
+        - name: ee.y
+          role: end_effector
+          space: cartesian_2d
+          origin: measured
+          is_delta: false
+          is_physical: true
+          unit: px
+          metric_convertible: false
+          frame: world
+          group: ee_xy
+          min: 0.0
+          max: 512.0
+
+    state:
+      level: per_frame_continuous
+      channels:
+        - name: ee.x
+          role: end_effector
+          space: cartesian_2d
+          origin: measured
+          is_delta: false
+          is_physical: true
+          unit: px
+          metric_convertible: false
+          frame: world
+          group: ee_xy
+          min: 0.0
+          max: 512.0
+        - name: ee.y
+          role: end_effector
+          space: cartesian_2d
+          origin: measured
+          is_delta: false
+          is_physical: true
+          unit: px
+          metric_convertible: false
+          frame: world
+          group: ee_xy
+          min: 0.0
+          max: 512.0

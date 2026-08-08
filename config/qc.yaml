@@ -1,0 +1,15 @@
+# The QC ruleset.
+#
+# `ruleset_version` is recorded on every qc_results row: a verdict is only meaningful next to
+# the version of the rules that produced it. Bump it whenever a rule's logic or a threshold
+# changes, so old verdicts stay interpretable instead of silently re-meaning.
+
+version: 1
+ruleset_version: "1.0"
+
+rules:
+  # Timestamps strictly increasing. Gated on real timestamps: on a source whose clock we
+  # synthesized from a declared rate the rule would pass by construction, which proves nothing,
+  # so it resolves to SKIPPED(reason=synthetic_timestamp) instead.
+  - id: TS_MONOTONIC
+    enabled: true
