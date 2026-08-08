@@ -72,13 +72,16 @@ added `rotation`, D forced `level`, `origin`, `clock`, and `success_adjudicator`
 
 ## Source A — `lerobot/pusht` (2D planar pushing, pixel units)
 
+LeRobot `codebase_version: v3.0` — **all** episodes share one data file and one video; per-episode
+files do not exist ([ADR 002](../../../docs/adr/002-lerobot-v3-layout-and-lost-termination.md)):
+
 ```
 pusht/
-  meta/info.json          # robot_type, fps, totals, features dtype/shape/names
-  meta/tasks.*            # task_index -> natural-language task
-  meta/episodes*          # per-episode length and start/end index
-  data/chunk-000/episode_000000.parquet
-  videos/chunk-000/observation.image/episode_000000.mp4
+  meta/info.json                        # robot_type, fps, totals, features dtype/shape/names
+  meta/tasks.parquet                    # task_index -> natural-language task
+  meta/episodes/chunk-000/file-000.parquet   # per-episode length + dataset_from/to_index
+  data/chunk-000/file-000.parquet       # every episode's rows, concatenated
+  videos/...                            # one mp4 covering all episodes
 ```
 
 10 Hz · 206 episodes · ~25650 frames · `action`/`observation.state` both `float32[2]`.
@@ -96,13 +99,19 @@ One row: `action = [222.0, 97.0]` (pusher target xy, **pixels**, range ~[0, 512]
 - No gripper, no joints, no orientation. This is the "non-standard, non-single-arm" source.
 - **`next.reward` is lossless.** It is the T-block/goal polygon overlap ratio, and the T block's
   pose is stored **nowhere** — unrecomputable once dropped.
+- **`timestamp` is not a clock.** It is bit-for-bit `float32(frame_index / fps)`, so
+  `timestamp_source="synthesized@10Hz"` and every timestamp rule is `SKIPPED`
+  ([ADR 005](../../../docs/adr/005-pusht-timestamps-are-synthesized.md)). The adapter *measures*
+  this per episode rather than hardcoding it per source.
 - Termination is decided by the **environment** (`coverage > 0.95`):
-  `termination_source="env_rule"`, `success_adjudicator="simulator"`. But LeRobot exported only
-  `next.done` — **M0 must confirm** whether `terminated` vs `truncated` survived. If not, register
-  a known limitation.
+  `termination_source="env_rule"`, `success_adjudicator="simulator"`. LeRobot exported only
+  `next.done`, so `is_truncated=None` — a known, recorded limitation, not a guess.
+- `next.success` is absent from some exports; when it is, `success=None` **and**
+  `success_adjudicator="none"`, never `success=False`.
 
-`upstream_id` = the parquet file / episode index (stable). `content_hash` = sha256 of the
-upstream file.
+`upstream_id` = `episode_{index:06d}` (stable). `content_hash` = the **canonical digest of the
+normalized columns**, not the upstream file's sha256: one shared shard covers 206 episodes, so a
+file hash cannot distinguish them.
 
 ---
 

@@ -21,27 +21,35 @@ fixed-width vector is wrong and is explicitly rejected by the design.
 
 ## Current State
 
-**M0 (feasibility spike) is complete. M1 is next: the walking skeleton.**
+**M0 (spike) and M1 (walking skeleton) are complete. M2 is next: resume and idempotency.**
+
+`rdp run --source pusht && rdp export && rdp report` works end to end on real data, for source A
+only. A re-run correctly skips what is already committed; **crash resume is not implemented yet**
+— that is M2, together with `episode_state`, leases, staleness detection and the fault-injection
+matrix.
 
 ```
 docs/technical_design.md      # the design authority — domain model, schema, QC, layering
 docs/implementation_plan.md   # milestones M0–M8, each with verification commands
 docs/adr/000..004             # M0's decisions: source selection, no-TF RLDS reader,
                               #   LeRobot v3.0 + lost termination, C's 8-D action, EPIC fps/IMU
+docs/adr/005..006             # M1's: pusht's synthesized clock, catalog schema + store layout
 docs/assessment.md            # original requirements (Chinese)
 docs/assessment_for_ai.md     # requirements, agent-facing
 docs/ai_chat_sessions/*.json  # raw AI transcripts — archival, do not edit or translate
 pyproject.toml                # uv project; `spike` dependency group is M0-only and throwaway
-config/sources.yaml           # the four sources, with measured max_episodes caps
-spikes/probe_{lerobot,rlds,epic}.py   # throwaway M0 probes; _out/*.txt is their captured output
-src/rdp/__init__.py           # package stub only — no domain code yet
+config/{sources,embodiments,qc}.yaml   # sources, per-embodiment channel semantics, ruleset
+spikes/probe_*.py             # throwaway probes; _out/*.txt is their captured output
+src/rdp/{domain,application,infrastructure,interfaces}/
+tests/{unit,integration,fixtures}/     # 67 tests, ~0.5 s; domain coverage 97%
+scripts/make_fixtures.py      # regenerates the 39 KB committed pusht mini fixture
 ```
 
-**Read `docs/adr/000`–`004` before touching an adapter.** M0 measured four things the design
-had guessed wrong, and all four are now corrected in `docs/technical_design.md` Appendix A.
+**Read `docs/adr/000`–`006` before touching an adapter.** M0 measured four things the design had
+guessed wrong and M1 a fifth; all are corrected in `docs/technical_design.md`.
 
-`tests/` and `scripts/` still **do not exist**. Create them milestone by milestone per the
-implementation plan; do not scaffold the whole tree up front.
+Only what a milestone needs gets built. `tests/acceptance/` and `scripts/demo_crash_resume.sh`
+arrive in M2; do not scaffold ahead of the plan.
 
 ## Prime Directive: the two acceptance scenarios
 

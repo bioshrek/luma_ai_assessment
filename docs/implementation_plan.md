@@ -180,15 +180,25 @@ sqlite3 store/catalog.sqlite "select status, count(*) from episodes group by 1"
 
 **Exit criteria**
 
-- [ ] `episodes` table has 10 rows, all `status = COMMITTED`.
-- [ ] `store/normalized/pusht/<uid>/frames.parquet` opens with `pyarrow` and its columns match
-      the naming contract exactly: `t`, `action.<name>`, `state.<name>`, `raw.<name>`.
-- [ ] `qc_results` has one row per episode for `TS_MONOTONIC` with numeric `metrics_json`.
-- [ ] `exports/subset.jsonl` parses line-by-line and every line carries all fields listed in §6
+- [x] `episodes` table has 10 rows, all `status = COMMITTED`.
+- [x] `store/normalized/pusht/<upstream_id>/frames.parquet` opens with `pyarrow` and its columns
+      match the naming contract exactly: `t`, `action.<name>`, `state.<name>`, `raw.<name>`.
+      (Keyed by `upstream_id` rather than `uid`, which embeds a `:` — [ADR 006](adr/006-m1-catalog-schema-and-store-layout.md).)
+- [x] `qc_results` has one row per episode for `TS_MONOTONIC` with numeric `metrics_json`.
+- [x] `exports/subset.jsonl` parses line-by-line and every line carries all fields listed in §6
       of the design; total frames ≤ budget; every entry spans a whole episode.
-- [ ] `reports/run_<id>.md` reports per-run and cumulative counts consistent with the database.
-- [ ] Integration test `tests/integration/test_pipeline_smoke.py` reproduces the above on a
-      committed mini-fixture (<1 MB) with no network access.
+- [x] `reports/run_<id>.md` reports per-run and cumulative counts consistent with the database.
+- [x] Integration test `tests/integration/test_pipeline_smoke.py` reproduces the above on a
+      committed mini-fixture (39 KB) with no network access.
+
+**Outcome — two things measurement changed**
+
+1. pusht's `timestamp` column is bit-for-bit `float32(frame_index / fps)`, so it is synthesized
+   and `TS_MONOTONIC` resolves to `SKIPPED(synthetic_timestamp)` on every episode
+   ([ADR 005](adr/005-pusht-timestamps-are-synthesized.md)). The one rule M1 ships is skipped on
+   the one source M1 ingests — which is the gating path working, not a gap.
+2. The `episodes` sketch in design §4 was missing seven columns that QC gating and the export
+   manifest actually read ([ADR 006](adr/006-m1-catalog-schema-and-store-layout.md)).
 
 ---
 

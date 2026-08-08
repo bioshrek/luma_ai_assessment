@@ -332,7 +332,9 @@ Provenance = {
 }
 ```
 
-Typical values: A/B = `real` timestamps; C = `synthesized@5Hz` (RLDS steps have no timestamps at all); D = `annotation_seconds` + `derived_from_seconds@<official_fps>`.
+Typical values: A = `synthesized@10Hz` — **measured in M1, not assumed**: pusht's `timestamp` column is bit-for-bit `float32(frame_index / fps)` for all 25,650 rows, so the dataset records no acquisition time at all (ADR 005). B is the same LeRobot layout and is expected to classify the same way, to be confirmed by measurement in M3. C = `synthesized@5Hz` (RLDS steps have no timestamps at all); D = `annotation_seconds` + `derived_from_seconds@<extraction_fps>` (ADR 004).
+
+The adapter **measures** this rather than declaring it per source: it compares the timestamp column against the rate-derived reconstruction and reports `real` only when they differ. A LeRobot dataset that ships genuine timestamps is then classified correctly with no code change.
 
 **`signal_origin` is new relative to the previous revision, forced by D** (same origin as `Channel.origin`; this is the episode-level summary view): every state channel in A/B/C is `measured`, so the dimension did not exist; a single D episode has measured IMU, SfM-estimated camera pose, and human-annotated action labels. **It must affect QC severity** (see §3): judging an `estimated` channel by `measured` standards is systematic friendly fire, because COLMAP jumps come from reconstruction failure, not from corrupted data.
 
@@ -395,14 +397,18 @@ class SourceAdapter(Protocol):
 
 ```
 store/
-  raw/<source_id>/<episode_uid>/…          # staging, disposable
-  normalized/<source_id>/<episode_uid>/
+  raw/<source_id>/<upstream_id>/…          # staging, disposable
+  normalized/<source_id>/<upstream_id>/
       frames.parquet                        # per-frame low-dim signals (frame clock, see 2.2h)
       streams/<stream_id>.parquet           # non-frame-clock signal streams (e.g. D's IMU), with own t column
       episode.json                          # metadata + specs + capabilities + schema_version
   catalog.sqlite                            # catalog + state machine + QC results + run reports
   exports/subset_<ts>.jsonl
 ```
+
+The path key is `upstream_id`, not `episode_uid`: the uid embeds a `:` separator, which is not
+portable as a filename. The `<source_id>/` prefix supplies the rest of the identity, and
+`episodes.frames_path` is stored relative to the store root ([ADR 006](adr/006-m1-catalog-schema-and-store-layout.md)).
 
 Principle: **bulk data on the filesystem, metadata and state in SQLite**. SQLite holds only pointers and statistics, keeping the database file small, queries fast, and backups easy.
 
@@ -455,7 +461,7 @@ Each rule is implemented as a `QCRule` declaring `rule_id / severity(FAIL|REVIEW
 Design notes:
 
 - **`STATE_ACTION_ECHO` is a genuine trap and must be documented**: ALOHA (source B) is a **joint-position-controlled teleoperated demonstration**, so the action _is_ the next target joint angle and `corr(a_t, s_t)` is naturally > 0.999 — judging by correlation would misclassify the entire dataset. The real anomaly signal is **bit-level equality** (a real servo always has tracking error and can never be bit-identical) plus lag-1 mutual information dropping to 0 (the action does not lead the state at all). Plot the distribution of `max abs(a-s)` in a first pass before fixing the threshold. Gating must not guess from equal column widths; it explicitly checks `action_spec.space == state_spec.space and action_spec.dim == state_spec.dim` (precisely why §2.2b' introduced `StateSpec`). C's `state.space == "unknown"` therefore resolves cleanly to `SKIPPED`.
-- **Timestamp rules need `timestamp_source`, not just a capability**: RLDS (source C) steps have **no timestamps at all**; time is synthesized from step index and declared control frequency. Running `TS_MONOTONIC` on synthesized timestamps always passes, which is a meaningless false positive — so the verdict must be `SKIPPED(reason=synthetic_timestamp)`. This is the second canonical example of "degrading ≠ passing".
+- **Timestamp rules need `timestamp_source`, not just a capability**: RLDS (source C) steps have **no timestamps at all**; time is synthesized from step index and declared control frequency. Running `TS_MONOTONIC` on synthesized timestamps always passes, which is a meaningless false positive — so the verdict must be `SKIPPED(reason=synthetic_timestamp)`. This is the second canonical example of "degrading ≠ passing". **M1 showed this is not a C-only concern**: source A's `timestamp` column is itself synthesized, so `TS_MONOTONIC` skips on every pusht episode ([ADR 005](adr/005-pusht-timestamps-are-synthesized.md)). A source shipping a timestamp column is not evidence that a clock was ever read.
 - **Non-physical channels must be excluded from numeric rules — the third false-positive trap**: C's `terminate_episode` steps from 0 to 1 on the final frame, a magnitude orders of magnitude beyond that "channel's" usual p99.9. Without filtering by `is_physical`, **every C episode would be marked REVIEW by `ACTION_JERK`**, and its "limits" are $\{0,1\}$ rather than ±0.1 m, so judging it by physical limits in `ACTION_RANGE` is equally meaningless. Thresholds and statistics are therefore bucketed by `role`, never by column index.
 - **`GRIPPER_STUCK` must read `is_delta` before it reads the values — a trap M0 uncovered**: C's gripper channel is a change command where **`0` is the normal resting value** ("no change"), not a closed gripper ([ADR 003](adr/003-oxe-action-vector-is-8d.md)). In the probed episode it is `0.0` for all 71 steps. A `GRIPPER_STUCK` rule written against B's absolute-opening convention would fire on essentially every C episode. The rule is therefore gated on `channel.is_delta == False`, and for delta grippers a different question is asked (does the _cumulative_ command ever change?).
 - **Gating cannot look only at capabilities; it must also look at `level` — the fourth trap (forced by D)**: D has `has_action=True`, but its action is an `episode_label`. Looking only at capabilities would enable `ACTION_RANGE` / `ACTION_JERK` / `GRIPPER_STUCK` on a source with no per-frame numeric columns, ending in a KeyError or an empty array. The correct approach declares `required_level={"action": "per_frame_continuous"}`, yielding `SKIPPED(reason=action_level_is_episode_label)` on D. Note this reason is a **different conclusion** from "no action" and the report must count them separately: the former means "a different rule could check this" (e.g. label validity), the latter means "there is nothing to check".
@@ -464,11 +470,17 @@ Design notes:
 - All thresholds live in `config/qc.yaml`, and are **set after a first statistical pass** (data-driven, not guessed — and that conversation is itself evidence of AI usage).
 - Every rule emits **numeric metrics**, not just a boolean, stored in `qc_results`; hit rates and distributions in the report are computed directly from them.
 - Failures do not block: per-episode rule exceptions are caught, recorded as an `ERROR` verdict, and processing continues. One bad episode never aborts a run.
+- Episode roll-up: `FAIL` dominates `REVIEW` dominates `PASS`, and an all-`SKIPPED` episode is `PASS`. An `ERROR` rolls up to **`REVIEW`, not `FAIL`** — a crashing rule is evidence about our code, not about the data, and discarding an episode over our own bug is the same category of mistake as zero-filling a gap ([ADR 006](adr/006-m1-catalog-schema-and-store-layout.md)).
 - Rules are **pure functions** (`frames + EpisodeMeta -> Verdict`) that touch no IO and no database, so they can be tested against synthetic data before being implemented (see the TDD section, §8).
 
 ---
 
 ## 4. SQLite Schema (draft)
+
+The authoritative DDL is `src/rdp/infrastructure/persistence/schema.sql` (`PRAGMA user_version`).
+Schema version 1 (M1) implements everything below except `stream_specs_json`, `episode_state`
+and the lease columns, which arrive with the sources and the resume logic that need them; see
+[ADR 006](adr/006-m1-catalog-schema-and-store-layout.md).
 
 ```sql
 sources(source_id PK, kind, uri, revision, shard_layout_revision, config_json, created_at)
@@ -476,12 +488,15 @@ sources(source_id PK, kind, uri, revision, shard_layout_revision, config_json, c
 episodes(
   episode_uid PK,            -- f"{source_id}:{upstream_id}"
   source_id, upstream_id, content_hash,
-  embodiment, action_space, action_dim, n_frames,
+  embodiment, task, action_level, action_space, action_dim, physical_dim,
+  state_space, state_dim, n_frames,
   fps_nominal, fps_effective, duration_s,
-  capabilities_json, action_spec_json, state_spec_json, stream_specs_json, camera_json, raw_extra_json, boundary_json,
+  capabilities_json, action_spec_json, state_spec_json, stream_specs_json, camera_json,
+  provenance_json, raw_extra_json, raw_columns_json, stats_json, boundary_json,
   frames_path, status,       -- state machine, see below
   schema_version, adapter_version,  -- components of the staleness predicate (see §5, §8.7)
   qc_verdict,                -- PASS | FAIL | REVIEW | PENDING
+  last_error,
   first_seen_run, last_update_run, updated_at,
   UNIQUE(source_id, upstream_id)
 )

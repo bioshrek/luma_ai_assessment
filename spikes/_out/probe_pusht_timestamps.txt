@@ -1,0 +1,10 @@
+rows 25650
+fps from meta/info.json: 10.0
+timestamp == float32(frame_index/fps) exactly: True
+max abs diff: 0.0
+timestamp restarts per episode: ep1 first ts = 0.0
+ep0 dt unique: [0.09999943 0.0999999  0.09999996 0.09999999 0.1        0.10000001
+ 0.10000002 0.10000014 0.10000038]
+ep0 n frames: 161
+episodes: 206
+len min/max/mean: 49 246 124.51456310679612
