@@ -24,12 +24,12 @@
 
 要求：≥3 个来源、≥2 种存储格式、含一个非标准/非单臂来源。计划选 4 个（第 4 个是"优雅降级"的证据，量很小）：
 
-| #   | 来源                                                                                                            | 格式                            | 本体                | action 维度/语义                 | 帧率                | 相机 | 真机/仿真 |
-| --- | --------------------------------------------------------------------------------------------------------------- | ------------------------------- | ------------------- | -------------------------------- | ------------------- | ---- | --------- |
-| A   | `lerobot/pusht`                                                                                                 | Parquet + MP4                   | 2D 推块（非机械臂） | 2 维，末端 xy 位置目标           | 10 Hz               | 1    | 仿真      |
-| B   | `lerobot/aloha_sim_insertion_human`                                                                             | Parquet + MP4                   | ALOHA 双臂          | 14 维，双臂关节位置 + 夹爪       | 50 Hz               | 1~4  | 仿真      |
-| C   | OXE 小切片（`jxu124/OpenX-Embodiment` 中体量小的 sub-dataset，首选 `berkeley_autolab_ur5`，备选 `bridge` 切片） | RLDS/TFDS（episode→steps 嵌套） | UR5 单臂            | 7 维，末端 delta 位姿 + 夹爪开合 | 5~10 Hz（无时间戳） | 2~3  | 真机      |
-| D   | **EPIC-KITCHENS-100（本地已有副本）**                                                                           | 长视频 MP4 + JSON 时序标注      | 人手（无本体感知）  | **无 action、无 state**          | 30 fps（已重编码）  | 1    | 真人      |
+| #   | 来源                                                                                                            | 格式                            | 本体                | action 维度/语义                                                      | 帧率                | 相机 | 真机/仿真 |
+| --- | --------------------------------------------------------------------------------------------------------------- | ------------------------------- | ------------------- | --------------------------------------------------------------------- | ------------------- | ---- | --------- |
+| A   | `lerobot/pusht`                                                                                                 | Parquet + MP4                   | 2D 推块（非机械臂） | 2 维，末端 xy 位置目标                                                | 10 Hz               | 1    | 仿真      |
+| B   | `lerobot/aloha_sim_insertion_human`                                                                             | Parquet + MP4                   | ALOHA 双臂          | 14 维，双臂关节位置 + 夹爪                                            | 50 Hz               | 1~4  | 仿真      |
+| C   | OXE 小切片（`jxu124/OpenX-Embodiment` 中体量小的 sub-dataset，首选 `berkeley_autolab_ur5`，备选 `bridge` 切片） | RLDS/TFDS（episode→steps 嵌套） | UR5 单臂            | 7 维物理（末端 delta 位姿 + 夹爪）+ 3 维 `terminate_episode` 控制标志 | 5~10 Hz（无时间戳） | 2~3  | 真机      |
+| D   | **EPIC-KITCHENS-100（本地已有副本）**                                                                           | 长视频 MP4 + JSON 时序标注      | 人手（无本体感知）  | **无 action、无 state**                                               | 30 fps（已重编码）  | 1    | 真人      |
 
 选型理由（要写进文档）：
 
@@ -105,16 +105,19 @@ Source（数据集级）→ Episode（轨迹级）→ Frame（帧级）
 ```python
 ActionSpec = {
   "space": "joint_position" | "ee_pose_abs" | "ee_pose_delta" | "cartesian_2d" | "none",
-  "dim": int,
+  "dim": int,                          # 存储的总列宽
+  "physical_dim": int,                 # 其中物理通道数（统计/阈值只用这些）
   "channels": [ {"name": "left_arm.j1", "role": "arm", "unit": "rad",
-                 "arm_id": "left", "min": ..., "max": ...}, ... ],
+                 "arm_id": "left", "is_physical": True, "min": ..., "max": ...}, ... ],
   "gripper": {"indices": [6], "convention": "0=closed,1=open"} | None,
   "frame": "base" | "world" | "camera" | None,
   "is_delta": bool,
 }
 ```
 
-统一的部分只有**通道级元信息**：每个通道都必须有 `role`（arm / gripper / base / head / none）、`unit`、`arm_id`、取值范围。下游可以按 role 做跨本体的通用处理，也可以按 space 分桶训练。
+统一的部分只有**通道级元信息**：每个通道都必须有 `role`（arm / gripper / base / head / **control_flag** / none）、`unit`、`arm_id`、`is_physical`、取值范围。下游可以按 role 做跨本体的通用处理，也可以按 space 分桶训练。
+
+**`control_flag` 这个 role 是必需的，不是凑数**：来源 C 的 action 向量里混着 `terminate_episode`（一个 one-hot 控制标志，由策略输出「我做完了」），它和 `world_vector`(m) 躺在同一个向量里，但既没有单位、也没有物理限位、变化模式也完全不同（末帧 0→1 的阶跃）。把它按物理通道处理会让 `ACTION_RANGE` 的限位无意义、让 `ACTION_JERK` 在**每一条 C 的 episode 上都误报**。因此：所有跨通道统计（mean/std/行程/jerk/限位）一律只对 `is_physical == True` 的通道计算，`dim` 与 `physical_dim` 必须分开存。
 
 **b. 数值归一化：默认只做"单位与约定归一"，不做 min-max 缩放。**
 
@@ -128,12 +131,15 @@ ActionSpec = {
 
 **d. 无损 / 有损边界（文档要逐项列表）**
 
-| 必须无损                                                  | 可有损                                             | 可丢弃                                              |
-| --------------------------------------------------------- | -------------------------------------------------- | --------------------------------------------------- |
-| action / state 原始数值（单位换算是可逆的，记录换算因子） | 视频（转码、抽帧、只存元信息）                     | 上游内部调试字段（如 `frame_index` 冗余列）         |
-| 时间戳、episode 边界、帧序                                | 图像分辨率                                         | 上游的行内 padding / 空 step                        |
-| 任务语言指令原文                                          | reward / done 的具体数值（保留 bool 化的成功标记） | 与轨迹无关的 license/readme 文本（存 URI 引用即可） |
-| 本体/相机拓扑元信息                                       | 深度图（本轮不处理，只记录存在性）                 | —                                                   |
+| 必须无损                                                          | 可有损                             | 可丢弃                                              |
+| ----------------------------------------------------------------- | ---------------------------------- | --------------------------------------------------- |
+| action / state 原始数值（单位换算是可逆的，记录换算因子）         | 视频（转码、抽帧、只存元信息）     | 上游内部调试字段（如 `frame_index` 冗余列）         |
+| 时间戳、episode 边界、帧序                                        | 图像分辨率                         | 上游的行内 padding / 空 step                        |
+| 任务语言指令原文                                                  | —                                  | 与轨迹无关的 license/readme 文本（存 URI 引用即可） |
+| **逐帧 reward + `terminated`/`truncated` 区分**（见下方修正说明） | 深度图（本轮不处理，只记录存在性） | `discount`、`done` 的冗余镜像列                     |
+| 本体/相机拓扑元信息、`terminate_episode` 等控制标志通道           | —                                  | —                                                   |
+
+**关于 reward 的修正（原计划把它划进「可有损」，是错的）**：pusht 的 `next.reward` 是 T 块与目标区域的**多边形重叠率**，而该数据集里根本没有存 T 块位姿（`observation.state` 只有推杆 xy），因此这个数值**丢了就永远算不回来**。行为克隆确实用不到它，但离线 RL（IQL / CQL / Decision Transformer）以它为核心监督信号——入库层无权替下游做这个决定。代价上也不成立：一帧一个 float，全源加起来不过几百 KB。同理，`terminate_episode` 这类控制标志通道若要裁掉，必须写进 `provenance.transforms`（`{"op": "drop_channels", ...}`），不能默默消失。
 
 无法归入统一字段的上游字段，整体存进 `raw_extra`（JSON），保证"不理解的信息也不丢"。
 
@@ -143,6 +149,7 @@ ActionSpec = {
 Capabilities = {
   "has_action": bool, "has_state": bool, "has_video": bool, "has_gripper": bool,
   "has_language": bool, "has_reward": bool, "has_depth": bool,
+  "has_termination_signal": bool,       # 数据里是否存在显式的「结束了」信号
   "is_real_robot": bool, "is_teleop": bool,
 }
 ```
@@ -165,6 +172,23 @@ Provenance = {
 ```
 
 典型值：A/B = `real` 时间戳；C = `synthesized@5Hz`（RLDS step 里本来就没时间戳）；D = `annotation_seconds` + `derived_from_seconds@30fps`。
+
+**g. episode 边界：不只记录「在哪结束」，还要记录「谁判定的结束」。**
+
+「这条轨迹为什么在这里结束」在四个来源里是四个完全不同的机制，而同一个概念在 schema 里的**结构位置也不同**：A/B 的结束信号是**环境产出的标签**（`next.done`），C 的结束信号是**策略输出的动作通道**（`action.terminate_episode`），D 的边界是**标注员事后画的区间**。不显式建模就会出三类错：跨源统计把控制标志当物理量、离线 RL 的 bootstrap 算错、导出截断制造出上游不存在的假边界。
+
+```python
+EpisodeBoundary = {
+  "termination_source": "env_rule" | "policy_flag" | "operator" | "annotator" | "exporter",
+  "end_reason": "success" | "truncated" | "operator_stop" | "annotation_bound" | "unknown",
+  "is_truncated": bool,      # 被步数上限截断：末状态并非终止态
+  "success": bool | None,    # None 表示「不知道」，不是 False
+}
+```
+
+典型值：A = `env_rule / success`（覆盖率 > 0.95 由仿真器判定）或 `truncated`；B = `operator / operator_stop`（遥操作者停止录制）；C = `policy_flag`，`is_truncated` 由 `is_last & ~is_terminal` 推出；D = `annotator / annotation_bound`，`success=None`。
+
+**`terminated` 与 `truncated` 必须分开存，这是最容易被静默写错的一处**：`is_terminal=True` 表示轨迹真正终止，价值自举必须截断（$V(s_T)=0$）；`is_last=True, is_terminal=False` 表示只是被步数上限切断，末状态仍是普通状态，自举必须继续（$V(s_T) \neq 0$）。压成一个 `done` 布尔会让所有基于该导出的离线 RL 训练**无声地错**。pusht 在 gym 层同样区分 `terminated` / `truncated`，但 LeRobot 的导出可能只保留了 `next.done`——M0 spike 要确认，若确已丢失则登记进已知局限（第 11 节）。
 
 ### 2.3 统一读取
 
@@ -198,28 +222,55 @@ store/
 
 原则：**大数据走文件系统，元数据与状态走 SQLite**。SQLite 只存指针和统计，保证库文件小、查询快、备份容易。
 
+### 2.5 为什么要落一层 `normalized/`，而不是"原样存源 + 读时用 adapter 转"
+
+这是本设计里唯一一个"两条路都成立"的岔口，必须把取舍写清楚。注意问题本身要收窄：**adapter 两种方案里都存在**，真正的分歧只有一个——`normalize()` 的输出是**入库时算一次并落盘**，还是**每次读都重算**。这就是 ETL 与 virtual federation 的经典分野，判据是：**读放大倍数 × 单次解码成本 × 是否需要一个不可变产物来承载结论**。
+
+选择落盘的理由：
+
+1. **四个来源的读取成本极不对称。** RLDS/TFRecord 是嵌套的顺序流，"取第 47 条 episode 的第 100~160 帧"是 O(scan)，且要把 TensorFlow 拖进读取进程；Parquet 的 row group 让同一件事变成一次 seek。训练会把同一条 episode 读上百次，而归一化只跑一次——**为省磁盘而每个 epoch 付一次 RLDS 解码，是站错了边**。
+2. **依赖的爆炸半径。** 2.3 节已把 TFDS on macOS/py3.11 标为最大风险。若归一化发生在读时，这个风险就永久成为**每一个下游消费者**的依赖；落盘则把它隔离在一次性批处理里，下游只需要 `pyarrow`。
+3. **质检结论必须指向不会变的字节。** `episode_x: ACTION_JERK=REVIEW` 只有在它描述一份固定产物时才有意义。读时归一化的话，结论描述的是**某个函数的输出**：adapter 一升级、RLDS 的 action dict 展开顺序一改，所有已存结论静默失效且无从察觉。第 5 节的 `IngestionStage` 状态机同理——它需要一个稳定的对象身份才能推进。产物 + 校验和，才使结论可被证伪。
+4. **"对外契约"需要一次物化才能成立。** 附录 A.C 说通道展开顺序一旦确定就是对外契约；懒计算的顺序不是契约，只是"当前 adapter 的当前行为"。写下来的 `episode.json` + `ActionSpec` 才是契约本身。
+5. **跨源采样需要统一的物理布局，而不只是统一的逻辑视图。** 第 6 节按帧预算跨 A/B/C/D 选子集，需要统一随机访问与已知帧数；在四套互不兼容的 IO 模型上，这是一次分布式查询，在统一 Parquet 上只是一次索引查找。
+6. **错误集中在归一化这一步。** 批处理让错误一次性暴露、落进 catalog、被修掉；懒计算让它在第 400 次训练的中途、以不可复现的方式出现。
+
+**反方成立的情形要一并承认**：当语料极大而读取极少时（为用 1% 而归一化 100 TB 的 OXE），读时 adapter 才是对的。本设计已经对冲了这一点——`list_episodes()` 明确"只列，不下载"，**目录是懒的，只有被选中的切片才物化**。
+
+接受的两项代价与缓解：
+
+- **存储翻倍 + 副本相对上游漂移** → `provenance` 记录源 revision/commit 与 adapter 版本，使"过期"可被检测，重归一化可定向、幂等、可续跑。
+- **早期 schema 改动昂贵**（每改一次 `ActionSpec` 就要重跑）→ `normalized/` 被定义为**派生的、可丢弃可重建的数据**，`raw/` 始终保留，重建永远可行。
+
+**最后一层澄清（也是最容易被误读的一点）**：这里落盘的**不是"统一后的数据"**。第 2 节明确拒绝统一数值——不补零、不硬凑公共向量空间，数值留在原生单位里并带 `metric_convertible=false`。被统一的只有**容器与元数据契约**（同一套文件布局、通道级 `ActionSpec`、`Capabilities`、`Provenance`）。所以这一层是**重编码，不是融合**：无损（未建模的一律进 `raw_extra`）、可逆（`raw/` 保留）、全部变换有记录——它不但不违反"有损变换必须可追溯"，它正是该原则的实现机制。
+
+倘若交付物只是一份目录 + 质检报告、下游没有任何训练消费，那么"不落 `normalized/`、读时转"会是更好的答案；但第 6 节要导出可训练子集，所以不是。
+
 ---
 
-## 3. 质检规则（目标 8 条，最低要求 4 条）
+## 3. 质检规则（目标 10 条，最低要求 4 条）
 
 每条规则实现为 `QCRule`，声明 `rule_id / severity(FAIL|REVIEW) / required_capabilities / params`，输出 `Verdict(PASS|FAIL|REVIEW|SKIPPED, metrics, reason)`。
 
-| ID                         | 规则                                         | 判据（初值，后续按实跑数据调参）                                                                                  | 严重度                          | 依赖                                |
-| -------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------- |
-| `TS_MONOTONIC`             | 时间戳非单调 / 重复                          | 存在 `dt <= 0`                                                                                                    | FAIL                            | `timestamp_source == real`          |
-| `FPS_DRIFT`                | 实测帧率与标称不符 / 存在丢帧空洞            | `abs(median_dt - 1/fps_nominal) / (1/fps_nominal) > 5%`，或存在 `dt > 3×median_dt` 的空洞                         | REVIEW（空洞多于 1% 帧则 FAIL） | `timestamp_source == real`          |
-| `ACTION_RANGE`             | 动作越界 / NaN / Inf                         | 超出本体注册表的通道限位（如 aloha 关节限位、pusht 的 `[0,512]px`、UR5 delta 的 ±0.1m）；任一 NaN/Inf             | FAIL                            | has_action                          |
-| `ACTION_JERK`              | 帧间突变（跳变、传输丢包造成的阶跃）         | 单通道 `abs(delta_a)` 超过该通道 p99.9 的 5 倍，且前后各 2 帧不平滑（排除正常加速）                               | REVIEW                          | has_action                          |
-| `STATIC_EPISODE`           | 几乎全程静止 / 过短                          | 帧数 < 20；或 action 总行程 < 阈值；或 95% 的帧 `abs(delta_state)` < 噪声底                                       | FAIL                            | —                                   |
-| `STATE_ACTION_ECHO`        | action 被写成了 state 的回读（采集脚本 bug） | 共位帧 `a_t` 与 `s_t` **位级完全相等**（`max abs(a-s) < 1e-9`）的帧占比 > 90%。**不能只看相关性**：见下方陷阱说明 | REVIEW                          | has_action & has_state & 同空间同维 |
-| `VIDEO_FRAME_MISMATCH`     | 视频帧数与 parquet 行数不一致 / 某路相机缺失 | 任一相机 `abs(n_video - n_rows) > 1`；或相机路数少于该 source 声明                                                | FAIL                            | has_video                           |
-| `GRIPPER_STUCK`            | 夹爪通道全程无变化（拿放类示教里几乎不可能） | 夹爪通道 unique 值 == 1 且 episode 帧数 > 50                                                                      | REVIEW                          | has_action & has_gripper            |
-| `SEGMENT_BOUNDS`（D 专用） | 标注区间越界 / 重叠 / 过短                   | `end > video_duration`、`start >= end`、时长 < 0.4s（<12 帧）、与相邻 segment 重叠 > 50%                          | FAIL / REVIEW                   | 标注型 source                       |
+| ID                         | 规则                                         | 判据（初值，后续按实跑数据调参）                                                                                                                               | 严重度                          | 依赖                                |
+| -------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------- |
+| `TS_MONOTONIC`             | 时间戳非单调 / 重复                          | 存在 `dt <= 0`                                                                                                                                                 | FAIL                            | `timestamp_source == real`          |
+| `FPS_DRIFT`                | 实测帧率与标称不符 / 存在丢帧空洞            | `abs(median_dt - 1/fps_nominal) / (1/fps_nominal) > 5%`，或存在 `dt > 3×median_dt` 的空洞                                                                      | REVIEW（空洞多于 1% 帧则 FAIL） | `timestamp_source == real`          |
+| `ACTION_RANGE`             | 动作越界 / NaN / Inf                         | **仅物理通道**：超出本体注册表的通道限位（如 aloha 关节限位、pusht 的 `[0,512]px`、UR5 delta 的 ±0.1m）；任一 NaN/Inf                                          | FAIL                            | has_action                          |
+| `ACTION_JERK`              | 帧间突变（跳变、传输丢包造成的阶跃）         | **仅物理通道**：单通道 `abs(delta_a)` 超过该通道 p99.9 的 5 倍，且前后各 2 帧不平滑（排除正常加速）                                                            | REVIEW                          | has_action                          |
+| `STATIC_EPISODE`           | 几乎全程静止 / 过短                          | 帧数 < 20；或 action **物理通道**总行程 < 阈值；或 95% 的帧 `abs(delta_state)` < 噪声底                                                                        | FAIL                            | —                                   |
+| `STATE_ACTION_ECHO`        | action 被写成了 state 的回读（采集脚本 bug） | 共位帧 `a_t` 与 `s_t` **位级完全相等**（`max abs(a-s) < 1e-9`）的帧占比 > 90%。**不能只看相关性**：见下方陷阱说明                                              | REVIEW                          | has_action & has_state & 同空间同维 |
+| `VIDEO_FRAME_MISMATCH`     | 视频帧数与 parquet 行数不一致 / 某路相机缺失 | 任一相机 `abs(n_video - n_rows) > 1`；或相机路数少于该 source 声明                                                                                             | FAIL                            | has_video                           |
+| `GRIPPER_STUCK`            | 夹爪通道全程无变化（拿放类示教里几乎不可能） | 夹爪通道 unique 值 == 1 且 episode 帧数 > 50                                                                                                                   | REVIEW                          | has_action & has_gripper            |
+| `TERMINATION_CONSISTENCY`  | 结束信号与声明的判定方不一致                 | `policy_flag` 源：标志必须全程为 0、且恰好在末帧为 1；`env_rule` 源：`done` 只能出现在末帧。中间帧出现结束信号 = episode 被错误拼接；末帧没有 = 被截断但未标记 | FAIL / REVIEW                   | has_termination_signal              |
+| `SEGMENT_BOUNDS`（D 专用） | 标注区间越界 / 重叠 / 过短                   | `end > video_duration`、`start >= end`、时长 < 0.4s（<12 帧）、与相邻 segment 重叠 > 50%                                                                       | FAIL / REVIEW                   | 标注型 source                       |
 
 设计要点：
 
 - **`STATE_ACTION_ECHO` 是一个真陷阱，必须写进文档**：ALOHA（来源 B）是**关节位置控制的遥操示教**，action 就是下一刻的目标关节角，`corr(a_t, s_t)` 天然 > 0.999——按相关性判会把整个数据集全部误判。真正的异常信号是**位级相等**（真实伺服总有跟踪误差，不可能 bit-identical），以及 `lag-1 互信息` 降为 0（action 完全不领先于 state）。先跑一轮统计把 `max abs(a-s)` 的分布画出来再定阈值。
 - **时间戳类规则需要 `timestamp_source` 而不只是 capability**：RLDS（来源 C）的 step 里**根本没有时间戳**，时间是由 step index / 声明控制频率合成的。对合成时间戳跑 `TS_MONOTONIC` 永远 PASS，是无意义的假阳性——所以结论必须是 `SKIPPED(reason=synthetic_timestamp)`。这一条是“降级 ≠ 通过”的第二个典型例子。
+- **非物理通道必须从数值类规则里排除，这是第三个假阳性陷阱**：C 的 `terminate_episode` 在末帧从 0 跳到 1，幅度比该“通道”平时的 p99.9 大几个量级——若不按 `is_physical` 过滤，**每一条 C 的 episode 都会被 `ACTION_JERK` 判成 REVIEW**，且它的“限位”是 $\{0,1\}$ 而不是 ±0.1m，`ACTION_RANGE` 按物理限位判也没意义。因此阈值与统计一律按 `role` 分桶，而不是按列序号。
+- **`TERMINATION_CONSISTENCY` 能抓到其他九条看不见的错**：归一化时把两条 episode 错接成一条（中间帧出现结束信号）、或一条被截成两半（末帧无结束信号）。B/D 没有显式结束信号，`has_termination_signal=False` → 干净地 `SKIPPED`，又一个降级路径的实例。
 - 阈值全部走 `config/qc.yaml`，且**先跑一轮统计再定阈值**（数据驱动，不是拍脑袋——这一步的对话记录本身就是 AI 使用的证据）。
 - 每条规则输出**数值 metrics**（不只是布尔），存进 `qc_results`，报告里的命中率与分布直接从这里算。
 - 不合格不阻塞：单 episode 规则异常被捕获，记为 `ERROR` 结论并继续，绝不让一条坏数据中断整轮。
@@ -237,7 +288,7 @@ episodes(
   source_id, upstream_id, content_hash,
   embodiment, action_space, action_dim, n_frames,
   fps_nominal, fps_effective, duration_s,
-  capabilities_json, action_spec_json, camera_json, raw_extra_json,
+  capabilities_json, action_spec_json, camera_json, raw_extra_json, boundary_json,
   frames_path, status,       -- 状态机，见下
   qc_verdict,                -- PASS | FAIL | REVIEW | PENDING
   first_seen_run, last_update_run, updated_at,
@@ -298,10 +349,10 @@ CLI：`rdp export --budget 50000 --strategy balanced --out exports/subset.jsonl`
 2. 第一层按**本体**分配，而不是按来源——训练关心的是本体/动作空间的覆盖，来源只是存储事实。
 3. 组内配额用**平方根平滑**：$w_i = \sqrt{N_i} \big/ \sum_j \sqrt{N_j}$，再对每组施加上下限 $[\text{floor}, \text{cap}]$（如单组不超过总预算 40%、不少于 5%）。理由：纯按帧数比例分配会让 ALOHA 50Hz 的数据淹没 10Hz 的 pusht（帧数差 5 倍但信息量并不差 5 倍）；纯均分又浪费大源的多样性；sqrt 是行业里常用的折中（多语言 NLP 语料采样同款做法）。
 4. 组内排序：先按 QC 质量分（无 REVIEW 命中 > 有 REVIEW 命中），再按**任务标签去重**做轮转（round-robin over task），避免预算被同一个任务吃满。
-5. 帧预算按 episode **整段**给（不切碎轨迹），最后一个 episode 允许截断到帧范围，并在输出里写明 `frame_start/frame_end`。
+5. 帧预算按 episode **整段**给（不切碎轨迹），最后一个 episode 允许截断到帧范围，并在输出里写明 `frame_start/frame_end`。**截断会制造一个上游不存在的 episode 边界**（最坏的情况：刚好切掉带 `success=True` 的末帧，一条成功示教静默变成无标签数据），因此导出行必须写 `boundary.termination_source="exporter"` 与 `is_truncated=true`，不得沿用原 episode 的边界声明。
 6. 固定 `--seed`，导出可复现；`exports` 表记录策略与统计。
 
-输出行（JSONL）字段：`source_id, embodiment, action_space, action_dim, episode_uid, frame_start, frame_end, n_frames, fps, capabilities, task, frames_path, key_stats(mean/std/min/max per channel), qc_verdict, qc_rules_hit`。
+输出行（JSONL）字段：`source_id, embodiment, action_space, action_dim, physical_dim, episode_uid, frame_start, frame_end, n_frames, fps, capabilities, boundary, task, frames_path, key_stats(mean/std/min/max per physical channel), qc_verdict, qc_rules_hit`。
 
 ---
 
@@ -341,6 +392,7 @@ CLI：`rdp export --budget 50000 --strategy balanced --out exports/subset.jsonl`
 | **ActionSpec**       | 动作空间的结构化描述（值对象，不可变）                        | `domain/action_spec.py`                |
 | **Capabilities**     | 该 episode 拥有哪些模态（值对象）                             | `domain/capabilities.py`               |
 | **Provenance**       | 数据来自哪、经过什么变换、时间戳是真的还是合成的              | `domain/provenance.py`                 |
+| **EpisodeBoundary**  | episode 在哪结束、由谁判定、是终止还是被截断                  | `domain/boundary.py`                   |
 | **IngestionStage**   | episode 在流水线上的阶段（状态机，含合法迁移）                | `domain/stage.py`                      |
 | **QCRule / Verdict** | 一条质检规则 / 它的结论（PASS/FAIL/REVIEW/SKIPPED）           | `domain/qc/`                           |
 | **IngestionRun**     | 一次 pipeline 运行（聚合根，报告的统计口径）                  | `domain/run.py`                        |
@@ -369,10 +421,10 @@ flowchart LR
 src/rdp/
   domain/                    # 最内层：实体、值对象、领域服务。纯 Python + 少量 numpy，零 IO
     episode.py               # Episode 聚合根（含 stage 迁移不变量）
-    action_spec.py  capabilities.py  provenance.py  embodiment.py
+    action_spec.py  capabilities.py  provenance.py  embodiment.py  boundary.py
     frames.py                # FrameTable 值对象（列名/单位/dtype 约束）
     stage.py                 # IngestionStage 状态机：advance() 拒绝非法迁移
-    qc/                      # QCRule 协议 + 8 条规则（纯函数）
+    qc/                      # QCRule 协议 + 10 条规则（纯函数）
     curation/sampler.py      # 采样策略（纯函数：统计 -> SubsetPlan）
     errors.py
 
@@ -444,6 +496,8 @@ class FaultInjector(Protocol):                          # 生产实现是 no-op
 3. `Capabilities.has_action == False` ⟹ `ActionSpec.space == NONE` 且 frames 中 action 列为 NULL（禁止 0 填充）。
 4. QCRule 的 `required_capabilities` 不满足 ⟹ 结论只能是 `SKIPPED`，领域层强制，规则实现无法绕过。
 5. `SubsetPlan` 总帧数 ≤ 预算，且每个条目的 `frame_range` 必须落在该 episode 的实际帧数内。
+6. `ActionSpec.physical_dim == len([c for c in channels if c.is_physical])`；且任何跨通道统计（限位/jerk/行程）只能在物理通道子集上计算——由领域层的 `physical_view()` 统一提供，规则拿不到完整向量，从机制上无法误用。
+7. `EpisodeBoundary.is_truncated == True` ⇒ `end_reason != "success"`；`success` 为 `None` 时禁止任何下游把它当 `False` 读（类型层强制）。
 
 这些不变量全部有对应的单元测试，先写测试再写实现。
 
@@ -495,17 +549,17 @@ class FaultInjector(Protocol):                          # 生产实现是 no-op
 
 每个里程碑对应若干次 commit，且与 AI 对话记录时间线对齐。
 
-| 阶段                        | 产出                                                                             | 关键风险                                     |
-| --------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------- |
-| M0 数据可达性 spike         | A/B/C 各拉通 1 个 episode、D 用 ffprobe 读通 1 个视频；确认 TFDS 是否可用        | TFDS 装不上 → 切 HDF5                        |
-| M1 通用语言 + domain 模型   | `domain/` 全部值对象与不变量 + **对应单元测试（先写测试）**；design 初稿         | 设计返工，先用 AI 交叉评审再写代码           |
-| M2 端口 + 状态机 + 恢复用例 | `ports.py`、`IngestionStage`、`recover_incomplete`；**先写恢复的验收测试（红）** | 事务边界写错                                 |
-| M3 SQLite/Parquet 基础设施  | 让 M2 的红测试变绿：真仓储、原子写、UnitOfWork                                   | fsync/rename 细节                            |
-| M4 三个 adapter             | 归一化跑通，产出 normalized parquet；特征化测试锁通道映射                        | 通道语义映射错                               |
-| M5 QC 规则                  | 8 条规则（每条先写坏数据测试）+ 先统计后定阈值                                   | 阈值过松/过紧、ALOHA 的 echo 假阳性          |
-| M6 真 kill 验收             | `demo_crash_resume.sh` + 真子进程验收测试                                        | 与 fake 层结论不一致                         |
-| M7 导出 + 报告              | JSONL 子集、run/cumulative 报告                                                  | —                                            |
-| M8 文档与收尾               | design.md 全部问题、扩展问题、已知局限、AI 记录整理                              | 文档与代码对不上（专门用一次 AI 做对齐检查） |
+| 阶段                        | 产出                                                                             | 关键风险                                                  |
+| --------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| M0 数据可达性 spike         | A/B/C 各拉通 1 个 episode、D 用 ffprobe 读通 1 个视频；确认 TFDS 是否可用        | TFDS 装不上 → 切 HDF5                                     |
+| M1 通用语言 + domain 模型   | `domain/` 全部值对象与不变量 + **对应单元测试（先写测试）**；design 初稿         | 设计返工，先用 AI 交叉评审再写代码                        |
+| M2 端口 + 状态机 + 恢复用例 | `ports.py`、`IngestionStage`、`recover_incomplete`；**先写恢复的验收测试（红）** | 事务边界写错                                              |
+| M3 SQLite/Parquet 基础设施  | 让 M2 的红测试变绿：真仓储、原子写、UnitOfWork                                   | fsync/rename 细节                                         |
+| M4 三个 adapter             | 归一化跑通，产出 normalized parquet；特征化测试锁通道映射                        | 通道语义映射错                                            |
+| M5 QC 规则                  | 10 条规则（每条先写坏数据测试）+ 先统计后定阈值                                  | 阈值过松/过紧、ALOHA 的 echo 假阳性、控制标志通道误入统计 |
+| M6 真 kill 验收             | `demo_crash_resume.sh` + 真子进程验收测试                                        | 与 fake 层结论不一致                                      |
+| M7 导出 + 报告              | JSONL 子集、run/cumulative 报告                                                  | —                                                         |
+| M8 文档与收尾               | design.md 全部问题、扩展问题、已知局限、AI 记录整理                              | 文档与代码对不上（专门用一次 AI 做对齐检查）              |
 
 ---
 
@@ -546,6 +600,7 @@ Commit 纪律：小步提交、message 说明"做了什么 + 为什么"，节奏
 - OXE 只取一个小 sub-dataset，不代表整个 OXE 的多样性。
 - **来源 D 依赖本地已有副本**（30 GB，不进 git），评审方没有该数据时会自动跳过；且该副本是 512×288 / 30fps 的**重编码版**，与官方原始视频不同，视觉侧结论不可外推。
 - D 只用于验证降级路径，样本量小、无 action，不进入训练子集默认配额。
+- **`terminated` / `truncated` 的区分可能在上游就已丢失**：LeRobot 导出的 A/B 只有 `next.done`，若 M0 确认无法区分“达成目标”与“被步数上限切断”，则 `EpisodeBoundary.is_truncated` 对 A/B 只能填 `unknown`，该子集不适合直接用于离线 RL。
 
 ---
 
@@ -618,7 +673,8 @@ next.reward=0.14  next.done=false  next.success=false
 1. `names` 叫 `motor_0/motor_1` 是**误导**——它其实是任务空间 xy，不是电机。**上游字段名不可信，语义必须由我们自己的 `embodiments.yaml` 断言**，这是 adapter 层最该做的事。
 2. 单位是**像素**，没有场景尺度就无法换算成米。这直接击碎"一切长度归一到米"的天真设想 → `unit="px"` + `metric_convertible=false` 必须是**通道级**属性。
 3. 没有夹爪、没有关节、没有姿态：`space=cartesian_2d`，`channels[*].role="end_effector"`。这就是那个"非标准单臂"来源。
-4. `next.reward / next.success` 是仿真才有的 → `has_reward=True`；数值可有损（只保留 episode 级 success 标记）。
+4. `next.reward` 是**逐帧连续值**（T 块与目标区域的多边形重叠率），且 T 块位姿**没有**出现在任何列里 → 丢了算不回来，必须**无损保留**（原计划写的"可有损、只留 episode 级 success"是错的，见 2.2d）。
+5. **终止是环境判定的**：`coverage > 0.95` 由仿真环境算出，策略本身不产出结束信号 → `EpisodeBoundary.termination_source="env_rule"`。但 LeRobot 只导出了 `next.done`，`terminated`（达成）与 `truncated`（步数上限）可能已在上游合并，M0 spike 必须先确认这一点。
 
 ### B. `lerobot/aloha_sim_insertion_human` —— 双臂 14 自由度（关节空间，混合单位）
 
@@ -711,6 +767,10 @@ observation.state = [-0.010, -0.95, 1.10, ..., 0.019, ...]   # 实测关节角(r
 5. **夹爪约定不同**（-1/+1 vs 0/1 vs 连续宽度）→ 归一化到 `0=closed,1=open` 并保留反变换参数。
 6. `language_instruction`（文本）**必须无损保留**；`language_embedding`（512 维）**可丢弃**——它是可由文本重算的派生物，占空间且绑定特定编码器版本。这是"无损 / 可丢弃"边界最好的教学例子。
 7. `observation.state[15]` 的语义在不同 sub-dataset 间不一致且文档常语焉不详。**原则：拿不准语义的字段，宁可 `state=NULL` + `raw_extra` 原样保留，也不要猜着安一个 role**——猜错比缺失更有害。
+8. **`terminate_episode` 是塞在 action 向量里的控制标志，不是物理量**：这里"谁判定结束"的答案是**策略自己**（`termination_source="policy_flag"`），与 A 的环境判定、B 的操作者停录、D 的事后标注完全不同。因此：
+   - 维度声明为 `dim=10, physical_dim=7`，这 3 列 `role="control_flag", is_physical=False`，从 `ACTION_RANGE / ACTION_JERK / STATIC_EPISODE` 的统计里排除；
+   - 若最终选择只保留 7 维，**这是一次有损变换**，必须落 `provenance.transforms = [{"op": "drop_channels", "channels": [...], "reason": ...}]`，不能像原表格那样直接写"7 维（3+3+1）"当作无损；
+   - `is_last` 与 `is_terminal` 要分开读：`is_last & ~is_terminal` 即被截断（`is_truncated=True`），末状态不是终止态，离线 RL 在这里不能把 $V(s_T)$ 当 0。
 
 ### D. EPIC-KITCHENS-100（本地）—— 无 action、无 state 的人类第一视角
 
@@ -738,25 +798,32 @@ observation.state = [-0.010, -0.95, 1.10, ..., 0.019, ...]   # 实测关节角(r
     "is_original": false,
     "timestamp_source": "annotation_seconds",
     "frame_index_source": "derived_from_seconds@30fps"
+  },
+  "boundary": {
+    "termination_source": "annotator",
+    "end_reason": "annotation_bound",
+    "is_truncated": false,
+    "success": null
   }
 }
 ```
 
 ### 四源横向对照（这张表就是"为什么不能压成一个向量"的论据）
 
-| 维度        | A pusht         | B aloha          | C ur5 (RLDS)     | D epic100         |
-| ----------- | --------------- | ---------------- | ---------------- | ----------------- |
-| 存储        | Parquet + MP4   | Parquet + MP4    | TFRecord 嵌套    | MP4 + JSON 标注   |
-| 本体        | 平面推杆        | 双臂 6+1 ×2      | 单臂 UR5         | 人手              |
-| action 空间 | 任务空间绝对 xy | 关节空间绝对角   | 末端增量位姿     | 无                |
-| 维度        | 2               | 14               | 7（3+3+1）       | 0                 |
-| 单位        | **像素**        | rad + 归一化开度 | m + rad          | —                 |
-| 是否增量    | 否              | 否               | **是**           | —                 |
-| 时间戳      | 真实            | 真实             | **无（需合成）** | 标注秒 → 派生帧号 |
-| 帧率        | 10 Hz           | 50 Hz            | ~5 Hz            | 30 fps            |
-| 相机        | 1（96×96）      | 1~4（640×480）   | 2（含腕部）      | 1（512×288）      |
-| 真机/仿真   | 仿真            | 仿真             | 真机             | 真人              |
-| 语言指令    | 有（单一任务）  | 有（单一任务）   | 有（逐 step）    | verb+noun 合成    |
-| 夹爪        | 无              | 连续开度 ×2      | ±1 二值          | 无                |
+| 维度        | A pusht                   | B aloha          | C ur5 (RLDS)                     | D epic100         |
+| ----------- | ------------------------- | ---------------- | -------------------------------- | ----------------- |
+| 存储        | Parquet + MP4             | Parquet + MP4    | TFRecord 嵌套                    | MP4 + JSON 标注   |
+| 本体        | 平面推杆                  | 双臂 6+1 ×2      | 单臂 UR5                         | 人手              |
+| action 空间 | 任务空间绝对 xy           | 关节空间绝对角   | 末端增量位姿                     | 无                |
+| 维度        | 2                         | 14               | 10（7 物理 + 3 控制标志）        | 0                 |
+| 单位        | **像素**                  | rad + 归一化开度 | m + rad                          | —                 |
+| 是否增量    | 否                        | 否               | **是**                           | —                 |
+| 时间戳      | 真实                      | 真实             | **无（需合成）**                 | 标注秒 → 派生帧号 |
+| 帧率        | 10 Hz                     | 50 Hz            | ~5 Hz                            | 30 fps            |
+| 相机        | 1（96×96）                | 1~4（640×480）   | 2（含腕部）                      | 1（512×288）      |
+| 真机/仿真   | 仿真                      | 仿真             | 真机                             | 真人              |
+| 语言指令    | 有（单一任务）            | 有（单一任务）   | 有（逐 step）                    | verb+noun 合成    |
+| 夹爪        | 无                        | 连续开度 ×2      | ±1 二值                          | 无                |
+| 终止判定    | 环境规则（coverage>0.95） | 操作者停止录制   | **策略输出 `terminate_episode`** | 标注员事后画区间  |
 
 **结论**：能被真正统一的只有**结构**（episode/frame 的组织方式、通道级元信息、能力声明、provenance），**不是数值**。这就是第 2 节那套 schema 的全部立论依据。
