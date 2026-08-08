@@ -25,6 +25,11 @@ class Capabilities(BaseModel):
     has_imu: bool = False
     has_camera_pose: bool = False
     has_termination_signal: bool = False
+    """An upstream per-frame end-of-episode marker survived into `frames.parquet`. Declared by
+    the source is not enough — a marker we trimmed away is a marker QC cannot check."""
+    is_segment: bool = False
+    """This episode is an interval cut from a longer continuous recording, so its boundaries are
+    an annotator's claim and are themselves subject to QC."""
     is_real_robot: bool = False
     is_teleop: bool = False
 

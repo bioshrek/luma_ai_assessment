@@ -31,3 +31,7 @@ class CameraSpec(BaseModel):
     encoding: CameraEncoding
     is_present: bool
     """Whether the pixels are available locally — not merely declared upstream."""
+    n_frames: int | None = None
+    """Decoded frame count of this camera's imagery, *measured* by the adapter. `None` means the
+    pixels were never fetched, which is not the same as zero — `VIDEO_FRAME_MISMATCH` skips on
+    `None` and fires on a real disagreement."""

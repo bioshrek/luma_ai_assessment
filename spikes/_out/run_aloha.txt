@@ -1,0 +1,11 @@
+run run_20260808T144028_624be4 COMPLETED
+  committed                    10
+  discovered                   10
+  failed                       0
+  fetched                      10
+  normalized                   10
+  qc_done                      10
+  resumed_in_progress          0
+  skipped_already_processed    0
+  stale_renormalize            0
+  stale_reqc                   0

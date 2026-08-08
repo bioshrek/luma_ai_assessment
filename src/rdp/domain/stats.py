@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict
@@ -46,6 +48,15 @@ def _stats(values: NDArray[np.float64]) -> ChannelStats:
         p1=float(np.percentile(finite, 1)),
         p99=float(np.percentile(finite, 99)),
     )
+
+
+def summarize(values: Sequence[float]) -> ChannelStats:
+    """The same summary, over an arbitrary sample — the shape `rdp stats` reports thresholds in.
+
+    Lives here rather than in a second statistics module so that "distribution" means one thing
+    in this codebase: a QC metric across episodes is summarized exactly as a channel is.
+    """
+    return _stats(np.asarray(values, dtype=np.float64))
 
 
 def channel_stats(frames: FrameTable, *specs: SignalSpec) -> dict[str, ChannelStats]:

@@ -1,0 +1,33 @@
+### pusht next.done positions
+  offsets from the END of the episode -> count: {(np.int64(1), np.int64(0)): 80}
+
+### robust jump ratios and per-unit spans
+-- pusht
+   max|da| / median|da| (worst channel per episode): n=80 min=4.8 p1=5.1555 p50=12.2 p99=32.8233 max=34.6667
+   max|da| / p99|da| (worst channel per episode): n=80 min=1.0596 p1=1.07873 p50=1.36161 p99=3.48494 max=3.61672
+   largest span among channels in px: n=80 min=160 p1=190.81 p50=314.5 p99=410.712 max=415
+-- aloha_sim_insertion
+   max|da| / median|da| (worst channel per episode): n=50 min=75.2166 p1=84.3205 p50=302.104 p99=1538.35 max=1975.88
+   max|da| / p99|da| (worst channel per episode): n=50 min=1.59363 p1=1.7125 p50=2.755 p99=5.61831 max=5.62783
+   largest span among channels in normalized: n=50 min=0.874165 p1=0.889472 p50=0.972363 p99=1.08541 max=1.09111
+   largest span among channels in rad: n=50 min=1.05675 p1=1.06585 p50=1.24085 p99=1.5025 max=1.53858
+   gripper channels: 100, constant throughout: 0
+-- berkeley_ur5
+   max|da| / median|da| (worst channel per episode): n=12 min=84.9999 p1=85.4399 p50=122.833 p99=374.029 max=376.999
+   max|da| / p99|da| (worst channel per episode): n=12 min=1.28592 p1=1.29394 p50=1.87832 p99=2.29334 max=2.31815
+   largest span among channels in m: n=12 min=0.0373143 p1=0.0374023 p50=0.04 p99=0.04 max=0.04
+   largest span among channels in none: n=12 min=0.911504 p1=0.915059 p50=1 p99=1.37509 max=1.39323
+   largest span among channels in normalized: n=12 min=0 p1=0 p50=2 p99=2 max=2
+   largest span among channels in rad: n=12 min=0.0300952 p1=0.0316038 p50=0.0942857 p99=0.133333 max=0.133333
+   gripper channels: 12, constant throughout: 5
+-- epic100
+   max|da| / median|da| (worst channel per episode): n=20 min=2.41087 p1=2.50026 p50=5.91304 p99=13.5813 max=14.2591
+   max|da| / p99|da| (worst channel per episode): n=20 min=1.04319 p1=1.04428 p50=1.16785 p99=1.564 max=1.59451
+   largest span among channels in none: n=20 min=0.155191 p1=0.156814 p50=0.417752 p99=1.29246 max=1.32142
+
+### EPIC segments
+   segment duration (s), all 67k train segments: n=67217 min=0.2 p1=0.4 p50=1.57 p99=23.65 max=297.15
+   segments shorter than 0.4 s: 643
+   segments ending past the video duration: 0
+   overlap fraction with the next segment, when > 0: n=19162 min=0.00106838 p1=0.00731558 p50=0.235294 p99=1 max=1
+   overlapping pairs: 19162; over 50%: 5448

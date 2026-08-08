@@ -1,0 +1,12 @@
+run run_20260808T165004_62bc4b COMPLETED
+  committed                    12
+  discovered                   0
+  failed                       0
+  fetched                      0
+  normalized                   12
+  qc_done                      12
+  resumed_in_progress          0
+  skipped_already_processed    0
+  stale_renormalize            12
+  stale_reqc                   0
+EXIT=0 for berkeley_ur5

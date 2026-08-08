@@ -1,0 +1,38 @@
+run run_20260808T165006_e1341e  status=COMPLETED
+ counter                    value 
+ committed                  60    
+ discovered                 0     
+ failed                     0     
+ fetched                    0     
+ normalized                 60    
+ qc_done                    60    
+ resumed_in_progress        0     
+ skipped_already_processed  0     
+ stale_renormalize          60    
+ stale_reqc                 0     
+ stage      episodes 
+ COMMITTED  202      
+ rule                     verdict  episodes 
+ ACTION_JERK              PASS     142      
+ ACTION_JERK              SKIPPED  60       
+ ACTION_RANGE             PASS     142      
+ ACTION_RANGE             SKIPPED  60       
+ FPS_DRIFT                SKIPPED  202      
+ GRIPPER_STUCK            PASS     57       
+ GRIPPER_STUCK            REVIEW   5        
+ GRIPPER_STUCK            SKIPPED  140      
+ POSE_COVERAGE            PASS     20       
+ POSE_COVERAGE            SKIPPED  182      
+ SEGMENT_BOUNDS           PASS     59       
+ SEGMENT_BOUNDS           REVIEW   1        
+ SEGMENT_BOUNDS           SKIPPED  142      
+ STATE_ACTION_ECHO        PASS     130      
+ STATE_ACTION_ECHO        SKIPPED  72       
+ STATIC_EPISODE           FAIL     5        
+ STATIC_EPISODE           PASS     185      
+ STATIC_EPISODE           REVIEW   12       
+ TERMINATION_CONSISTENCY  PASS     130      
+ TERMINATION_CONSISTENCY  SKIPPED  72       
+ TS_MONOTONIC             SKIPPED  202      
+ VIDEO_FRAME_MISMATCH     SKIPPED  202      
+wrote reports/run_20260808T165006_e1341e.md

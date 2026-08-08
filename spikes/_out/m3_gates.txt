@@ -1,0 +1,59 @@
+All checks passed!
+Success: no issues found in 55 source files
+
+╔══╗─────────▶╔╗ ╔╗      ╔╗◀───┐
+╚╣╠╝◀─────┐  ╔╝╚╗║║────▶╔╝╚╗   │
+ ║║   ╔══╦══╦╩╗╔╝║║  ╔╦═╩╗╔╝╔═╦══╗
+ ║║╔══╣╔╗║╔╗║╔╣║ ║║ ╔╬╣╔╗║║ ║│║╔═╝
+╔╣╠╣║║║╚╝║╚╝║║║╚╗║╚═╝║║║║║╚╗║═╣║
+╚══╩╩╩╣╔═╩══╩╝╚═╝╚═══╩╩╝╚╩═╩╩═╩╝
+  └──▶║║                    ▲ 
+      ╚╝────────────────────┘
+
+
+---------
+Contracts
+---------
+
+Analyzed 82 files, 317 dependencies.
+------------------------------------
+
+Clean Architecture layers point inward KEPT
+domain does no IO KEPT
+application depends on ports, not adapters KEPT
+
+Contracts: 3 kept, 0 broken.
+........................................................................ [ 54%]
+.............................................................            [100%]
+================================ tests coverage ================================
+______________ coverage: platform darwin, python 3.12.11-final-0 _______________
+
+Name                                      Stmts   Miss  Cover
+-------------------------------------------------------------
+src/rdp/domain/__init__.py                    3      0   100%
+src/rdp/domain/action_spec.py               184      2    99%
+src/rdp/domain/boundary.py                   38      0   100%
+src/rdp/domain/camera.py                     22      0   100%
+src/rdp/domain/capabilities.py               24      1    96%
+src/rdp/domain/curation/__init__.py           3      0   100%
+src/rdp/domain/curation/sampler.py           28      0   100%
+src/rdp/domain/embodiment.py                 31      4    87%
+src/rdp/domain/episode.py                   132     12    91%
+src/rdp/domain/episode_state.py              30      0   100%
+src/rdp/domain/errors.py                      5      0   100%
+src/rdp/domain/frames.py                     71      2    97%
+src/rdp/domain/provenance.py                 35      0   100%
+src/rdp/domain/qc/__init__.py                 4      0   100%
+src/rdp/domain/qc/engine.py                  35      0   100%
+src/rdp/domain/qc/rule.py                    30      0   100%
+src/rdp/domain/qc/rules/__init__.py           3      0   100%
+src/rdp/domain/qc/rules/ts_monotonic.py      26      0   100%
+src/rdp/domain/run.py                        44      2    95%
+src/rdp/domain/source.py                     17      0   100%
+src/rdp/domain/stage.py                      37      0   100%
+src/rdp/domain/staleness.py                  30      0   100%
+src/rdp/domain/stats.py                      29      2    93%
+src/rdp/domain/subset.py                     32      0   100%
+-------------------------------------------------------------
+TOTAL                                       893     25    97%
+Required test coverage of 90% reached. Total coverage: 97.20%

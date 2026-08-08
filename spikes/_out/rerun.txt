@@ -1,0 +1,65 @@
+run run_20260808T144251_2d1481 COMPLETED
+  committed                    0
+  discovered                   0
+  failed                       0
+  fetched                      0
+  normalized                   0
+  qc_done                      0
+  resumed_in_progress          0
+  skipped_already_processed    4
+  stale_renormalize            0
+  stale_reqc                   0
+run run_20260808T144252_88f1c7 COMPLETED
+  committed                    0
+  discovered                   0
+  failed                       0
+  fetched                      0
+  normalized                   0
+  qc_done                      0
+  resumed_in_progress          0
+  skipped_already_processed    10
+  stale_renormalize            0
+  stale_reqc                   0
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/wanghuan/Documents/py_repos/luma_ai_assessment/src/rdp/interfaces/cli │
+│ .py:104 in export                                                            │
+│                                                                              │
+│   101 │   """Export a curated training subset. Episodes are whole; the       │
+│       budget is a ceiling."""                                                │
+│   102 │   container = Container(store=store, config=config)                  │
+│   103 │   try:                                                               │
+│ ❱ 104 │   │   result = container.export()(                                   │
+│   105 │   │   │   out=out,                                                   │
+│   106 │   │   │   budget_frames=budget,                                      │
+│   107 │   │   │   strategy=strategy,                                         │
+│                                                                              │
+│ /Users/wanghuan/Documents/py_repos/luma_ai_assessment/src/rdp/application/ex │
+│ port_subset.py:54 in __call__                                                │
+│                                                                              │
+│    51 │   │   seed: int | None = None,                                       │
+│    52 │   ) -> ExportResult:                                                 │
+│    53 │   │   if strategy not in STRATEGIES:                                 │
+│ ❱  54 │   │   │   raise ValueError(f"unknown strategy {strategy!r};          │
+│       available: {', '.join(STRATEGIES)}")                                   │
+│    55 │   │   verdicts = [EpisodeVerdict.PASS.value]                         │
+│    56 │   │   if include_review:                                             │
+│    57 │   │   │   verdicts.append(EpisodeVerdict.REVIEW.value)               │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ValueError: unknown strategy 'balanced'; available: sequential
+run run_20260808T144252_88f1c7  status=COMPLETED
+ counter                    value 
+ committed                  0     
+ discovered                 0     
+ failed                     0     
+ fetched                    0     
+ normalized                 0     
+ qc_done                    0     
+ resumed_in_progress        0     
+ skipped_already_processed  10    
+ stale_renormalize          0     
+ stale_reqc                 0     
+ stage      episodes 
+ COMMITTED  24       
+ rule          verdict  episodes 
+ TS_MONOTONIC  SKIPPED  24       
+wrote reports/run_20260808T144252_88f1c7.md

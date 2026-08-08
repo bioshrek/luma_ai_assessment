@@ -20,13 +20,19 @@ from rdp.infrastructure.persistence.repositories import (
     SqliteSourceRepository,
 )
 
-SCHEMA_USER_VERSION = 2
+SCHEMA_USER_VERSION = 4
 
 # Every schema change so far has been additive, so an existing catalog is upgraded in place
 # instead of being rebuilt. `raw/` stays authoritative either way (design §2.4).
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("episodes", "ruleset_version", "TEXT"),
     ("runs", "resumed_from", "TEXT"),
+    # M5: the QC view of an episode gained two facts (design §2.2i).
+    ("episodes", "segment_json", "TEXT"),
+    ("episodes", "termination_column", "TEXT"),
+    # M5: M4 declared `stream_specs` but never stored them, so an episode rebuilt from the
+    # catalog on a re-QC lost its streams and tripped invariant 17 against the files on disk.
+    ("episodes", "stream_specs_json", "TEXT"),
 )
 
 

@@ -8,8 +8,11 @@ from enum import StrEnum
 from typing import Protocol
 
 from rdp.domain.action_spec import SignalLevel, SignalOrigin, SignalSpec
+from rdp.domain.boundary import EpisodeBoundary
+from rdp.domain.camera import CameraSpec
 from rdp.domain.capabilities import Capabilities
 from rdp.domain.frames import FrameTable
+from rdp.domain.segment import EpisodeSegment
 
 
 class Verdict(StrEnum):
@@ -74,7 +77,9 @@ class QCRule(Protocol):
 class QCEpisodeView(Protocol):
     """The slice of episode metadata Quality is allowed to see (design §8.2).
 
-    Deliberately minimal: a rule that needs to branch on `source_id` is a wrong rule.
+    Deliberately minimal: a rule that needs to branch on `source_id` is a wrong rule. Everything
+    here is a *declared property of this episode* that some rule must compare the numbers
+    against — never an identifier a rule could special-case on.
     """
 
     @property
@@ -82,6 +87,24 @@ class QCEpisodeView(Protocol):
 
     @property
     def has_real_timestamps(self) -> bool: ...
+
+    @property
+    def n_frames(self) -> int: ...
+
+    @property
+    def fps_nominal(self) -> float | None: ...
+
+    @property
+    def cameras(self) -> tuple[CameraSpec, ...]: ...
+
+    @property
+    def boundary(self) -> EpisodeBoundary: ...
+
+    @property
+    def segment(self) -> EpisodeSegment | None: ...
+
+    @property
+    def termination_column(self) -> str | None: ...
 
     def level_of(self, signal: str) -> SignalLevel: ...
 

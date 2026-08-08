@@ -44,7 +44,7 @@ from rdp.infrastructure.sources.tfrecord import Feature, iter_records, parse_exa
 from rdp.infrastructure.sources.upstream_fetch import UpstreamFetcher
 from rdp.infrastructure.storage.atomic_fs import atomic_write_bytes, atomic_write_text
 
-ADAPTER_VERSION = "rlds@1.0.0"
+ADAPTER_VERSION = "rlds@1.1.0"
 
 DATASET_INFO_PATH = "dataset_info.json"
 FEATURES_PATH = "features.json"
@@ -52,6 +52,10 @@ SUPPORTED_FILE_FORMAT = "tfrecord"
 
 RECORD_FILE = "record.pb"
 REF_FILE = "ref.json"
+
+TERMINAL_KEY = "steps/is_terminal"
+TERMINAL_COLUMN = "raw.is_terminal"
+"""RLDS's end-of-episode marker, upstream and as stored. Named here so no rule guesses it."""
 
 ACTION_KEYS: tuple[tuple[str, int], ...] = (
     ("steps/action/world_vector", 3),
@@ -234,7 +238,12 @@ class RLDSAdapter:
             has_language=instruction is not None,
             has_reward="steps/reward" in example,
             has_depth=any(c.channels == 1 for c in cameras),
-            has_termination_signal="steps/is_terminal" in example,
+            # Measured on the rows we kept, not on the ones upstream shipped. ADR 009's padding
+            # trim removes precisely the steps that carry `is_terminal`, so declaring the
+            # capability from the record's schema would hand `TERMINATION_CONSISTENCY` a column
+            # that is all-false by our own doing and earn a REVIEW on every episode. A fact we
+            # deleted is a fact we no longer have (ADR 015).
+            has_termination_signal=_has_end_marker(example, keep),
             is_real_robot=embodiment.is_real_robot,
             is_teleop=embodiment.is_teleop,
         )
@@ -267,6 +276,12 @@ class RLDSAdapter:
             fps_nominal=control_hz,
             fps_effective=control_hz,
             duration_s=float(frames.t[-1] - frames.t[0]) if frames.n_frames > 1 else 0.0,
+            termination_column=(
+                TERMINAL_COLUMN
+                if capabilities.has_termination_signal
+                and TERMINAL_COLUMN in frames.raw_frame_columns
+                else None
+            ),
             raw_extra={
                 "rlds": {
                     "split": extra.get("split"),
@@ -338,6 +353,14 @@ def _step_count(example: Mapping[str, Feature]) -> int:
         if key in example:
             return len(example[key])
     raise InvariantViolation("cannot determine the step count: no per-step boundary flag present")
+
+
+def _has_end_marker(example: Mapping[str, Feature], keep: int) -> bool:
+    """Did an end-of-episode marker survive the padding trim? See `_keep_count`."""
+    terminal = example.get(TERMINAL_KEY)
+    if terminal is None:
+        return False
+    return any(bool(value) for value in terminal.values[:keep])
 
 
 def _keep_count(example: Mapping[str, Feature], n_upstream: int) -> int:

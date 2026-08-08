@@ -11,6 +11,7 @@ from functools import cached_property
 from pathlib import Path
 
 from rdp.application.build_report import BuildReport
+from rdp.application.build_stats import BuildStats
 from rdp.application.export_subset import ExportSubset
 from rdp.application.ingest_episodes import IngestEpisodes
 from rdp.application.ports import SourcePort
@@ -154,6 +155,9 @@ class Container:
 
     def report(self) -> BuildReport:
         return BuildReport(uow_factory=self.unit_of_work)
+
+    def stats(self) -> BuildStats:
+        return BuildStats(uow_factory=self.unit_of_work)
 
     def new_run_id(self) -> str:
         stamp = self.clock.now_iso().replace(":", "").replace("-", "").split(".")[0]

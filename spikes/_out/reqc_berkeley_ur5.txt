@@ -1,0 +1,11 @@
+run run_20260808T165342_642fa7 COMPLETED
+  committed                    12
+  discovered                   0
+  failed                       0
+  fetched                      0
+  normalized                   0
+  qc_done                      12
+  resumed_in_progress          0
+  skipped_already_processed    0
+  stale_renormalize            0
+  stale_reqc                   12

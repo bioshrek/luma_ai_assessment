@@ -36,7 +36,7 @@ from rdp.infrastructure.sources.staging import is_staged, mark_staged
 from rdp.infrastructure.sources.upstream_fetch import UpstreamFetcher, UpstreamNotFound
 from rdp.infrastructure.storage.atomic_fs import atomic_write, atomic_write_text
 
-ADAPTER_VERSION = "lerobot@1.1.0"
+ADAPTER_VERSION = "lerobot@1.2.0"
 
 INFO_PATH = "meta/info.json"
 TASKS_PATH = "meta/tasks.parquet"
@@ -46,6 +46,8 @@ ACTION_COLUMN = "action"
 STATE_COLUMN = "observation.state"
 TIMESTAMP_COLUMN = "timestamp"
 FRAME_INDEX_COLUMN = "frame_index"
+DONE_COLUMN = "next.done"
+"""LeRobot's end-of-episode marker. ADR 002: it merges terminated and truncated into one flag."""
 _INDEX_COLUMN = "index"
 """The dataset-global row id `meta/episodes` boundaries are expressed in."""
 
@@ -227,7 +229,7 @@ class LeRobotAdapter:
             has_video=bool(cameras) and source.with_video,
             has_language=bool(tasks),
             has_reward="next.reward" in present,
-            has_termination_signal="next.done" in present,
+            has_termination_signal=DONE_COLUMN in present,
             is_real_robot=embodiment.is_real_robot,
             is_teleop=embodiment.is_teleop,
         )
@@ -248,6 +250,13 @@ class LeRobotAdapter:
             fps_nominal=fps_nominal,
             fps_effective=_effective_fps(frames.t, fps_nominal),
             duration_s=float(frames.t[-1] - frames.t[0]) if frames.n_frames > 1 else 0.0,
+            # Named, not guessed: `TERMINATION_CONSISTENCY` must read the column upstream
+            # actually wrote, and only if it survived into the frame table.
+            termination_column=(
+                f"raw.{DONE_COLUMN}"
+                if f"raw.{DONE_COLUMN}" in frames.raw_frame_columns
+                else None
+            ),
             raw_extra={
                 "lerobot": {
                     "codebase_version": info.get("codebase_version"),

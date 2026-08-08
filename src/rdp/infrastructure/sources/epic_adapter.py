@@ -56,12 +56,13 @@ from rdp.domain.episode import CanonicalEpisode, EpisodeMeta, make_uid
 from rdp.domain.errors import InvariantViolation
 from rdp.domain.frames import FrameTable
 from rdp.domain.provenance import ANNOTATION_SECONDS, Provenance
+from rdp.domain.segment import EpisodeSegment
 from rdp.domain.source import Source
 from rdp.infrastructure.sources.staging import is_staged, mark_staged
 from rdp.infrastructure.sources.upstream_fetch import UpstreamFetcher, UpstreamNotFound
 from rdp.infrastructure.storage.atomic_fs import atomic_write_text
 
-ADAPTER_VERSION = "epic@1.1.0"
+ADAPTER_VERSION = "epic@1.2.0"
 
 ANNOTATIONS_LAYER = "annotations"
 CAMERA_POSE_LAYER = "camera_pose"
@@ -142,15 +143,29 @@ class EpicKitchensAdapter:
         for row in self._segments(source):
             if row["video_id"] in by_video:
                 by_video[row["video_id"]].append(row)
+        neighbours = {
+            narration_id: bounds
+            for rows in by_video.values()
+            for narration_id, bounds in _neighbours(rows).items()
+        }
 
         # Round-robin, not video-by-video: `--max-episodes 20` must still span a video that has
         # IMU and one that does not, or the capability heterogeneity never shows up in a run.
         for group in zip(*(by_video[video] for video in wanted), strict=False):
             for row in group:
-                yield self._ref(source, row, videos[row["video_id"]])
+                yield self._ref(
+                    source,
+                    row,
+                    videos[row["video_id"]],
+                    neighbours[row["narration_id"]],
+                )
 
     def _ref(
-        self, source: Source, row: Mapping[str, str], video: Mapping[str, str]
+        self,
+        source: Source,
+        row: Mapping[str, str],
+        video: Mapping[str, str],
+        neighbours: Mapping[str, float | None],
     ) -> EpisodeRef:
         official_fps = float(video["fps"])
         start_s = _seconds(row["start_timestamp"])
@@ -169,6 +184,11 @@ class EpicKitchensAdapter:
                 "stop_s": stop_s,
                 "first_frame": first,
                 "last_frame": last,
+                # Where the neighbouring annotations of the same video end and begin. A property
+                # of the annotation table rather than of this segment's bytes, and the only way
+                # `SEGMENT_BOUNDS` can ask whether two annotations describe the same moment.
+                "prev_stop_s": neighbours["prev_stop_s"],
+                "next_start_s": neighbours["next_start_s"],
                 "segment": dict(row),
                 "video_info": dict(video),
             },
@@ -270,6 +290,10 @@ class EpicKitchensAdapter:
 
     def normalize(self, raw: RawEpisode, source: Source) -> CanonicalEpisode:
         staged = json.loads((raw.path / REF_FILE).read_text())
+        # The staged copy is authoritative — a resume must reach the same conclusion offline.
+        # Discovery fills in only the keys staged before that field existed, which is what lets
+        # a schema addition be a re-normalization instead of a re-download (design §5).
+        staged["extra"] = {**dict(raw.ref.extra), **dict(staged["extra"])}
         extra = staged["extra"]
         layers: Mapping[str, bool] = staged["layers"]
         embodiment = self._embodiments.get(source.embodiment)
@@ -343,6 +367,9 @@ class EpicKitchensAdapter:
             has_gripper=False,
             has_reward=False,
             has_termination_signal=False,
+            # The boundaries of this episode are an annotator's claim about a continuous
+            # recording, so they are themselves subject to QC (`SEGMENT_BOUNDS`).
+            is_segment=True,
             is_real_robot=embodiment.is_real_robot,
             is_teleop=embodiment.is_teleop,
         )
@@ -392,6 +419,14 @@ class EpicKitchensAdapter:
             fps_nominal=official_fps,
             fps_effective=official_fps,
             duration_s=float(frames.t[-1] - frames.t[0]) if frames.n_frames > 1 else 0.0,
+            segment=EpisodeSegment(
+                parent_id=str(extra["video_id"]),
+                start_s=float(extra["start_s"]),
+                end_s=float(extra["stop_s"]),
+                parent_duration_s=_optional_float(video.get("duration")),
+                prev_end_s=_optional_float(extra.get("prev_stop_s")),
+                next_start_s=_optional_float(extra.get("next_start_s")),
+            ),
             raw_extra={
                 "epic": {
                     "narration": segment.get("narration"),
@@ -475,6 +510,29 @@ def _frame_range(start_s: float, stop_s: float, fps: float) -> tuple[int, int]:
     first = int(start_s * fps)
     last = max(first, int(stop_s * fps))
     return first, last
+
+
+def _neighbours(rows: Sequence[Mapping[str, str]]) -> dict[str, dict[str, float | None]]:
+    """For each annotation of one video, when the annotations either side of it end and begin.
+
+    In start order, not file order: EPIC's narration ids follow the order the narrator *spoke*,
+    which is not the order the actions happened in.
+    """
+    ordered = sorted(rows, key=lambda row: _seconds(row["start_timestamp"]))
+    bounds: dict[str, dict[str, float | None]] = {}
+    for index, row in enumerate(ordered):
+        previous = ordered[index - 1] if index else None
+        following = ordered[index + 1] if index + 1 < len(ordered) else None
+        bounds[row["narration_id"]] = {
+            "prev_stop_s": _seconds(previous["stop_timestamp"]) if previous else None,
+            "next_start_s": _seconds(following["start_timestamp"]) if following else None,
+        }
+    return bounds
+
+
+def _optional_float(value: Any) -> float | None:
+    """Unknown stays unknown. A missing bound is not a bound of zero."""
+    return None if value is None else float(value)
 
 
 # -- camera pose layer ---------------------------------------------------------------------

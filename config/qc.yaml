@@ -2,10 +2,17 @@
 #
 # `ruleset_version` is recorded on every qc_results row: a verdict is only meaningful next to
 # the version of the rules that produced it. Bump it whenever a rule's logic or a threshold
-# changes, so old verdicts stay interpretable instead of silently re-meaning.
+# changes, so old verdicts stay interpretable instead of silently re-meaning. A bump rewinds
+# every committed episode to NORMALIZED and re-runs QC — it never re-fetches or re-normalizes.
+#
+# Every threshold below cites the measurement that justifies it. The measurements come from the
+# 202 ingested episodes (pusht 80, aloha_sim_insertion 50, berkeley_ur5 12, epic100 60) and, for
+# SEGMENT_BOUNDS, from all 67,217 EPIC-100 training segments. `rdp stats` reproduces them from
+# `qc_results.metrics_json`; a threshold that no longer has daylight against the corpus is a
+# threshold to revisit, and that is a query, not an opinion.
 
 version: 1
-ruleset_version: "1.1"
+ruleset_version: "2.1"
 
 rules:
   # Timestamps strictly increasing. Gated on real timestamps: on a source whose clock we
@@ -13,6 +20,18 @@ rules:
   # so it resolves to SKIPPED(reason=synthetic_timestamp) instead.
   - id: TS_MONOTONIC
     enabled: true
+
+  # Measured frame rate against the declared one, plus dropped-frame gaps. Also gated on real
+  # timestamps, and for the same reason: measured drift of a synthesized clock against the rate
+  # it was synthesized from is 9.5e-7 or less on all 130 LeRobot episodes — a tautology, not a
+  # measurement. No source in this corpus publishes real timestamps, so this rule is SKIPPED
+  # corpus-wide. That is the honest answer, and it is counted as such.
+  - id: FPS_DRIFT
+    enabled: true
+    params:
+      max_drift: 0.05 # |median_dt - 1/fps| / (1/fps)
+      gap_factor: 3.0 # a step longer than this multiple of the episode's own median step
+      max_gap_fraction: 0.01 # above this share of steps, gaps are a FAIL rather than a REVIEW
 
   # Action values finite and inside their declared channel limits. Two gates, both load-bearing:
   # `has_action` alone is not enough, because source D has an action that is an episode-level
@@ -23,6 +42,99 @@ rules:
   - id: ACTION_RANGE
     enabled: true
 
+  # Isolated inter-frame discontinuities: packet loss, a corrupt sample, a teleport.
+  #
+  # max_ratio is `max |step| / p99 |step|` within one episode and one channel. Measured worst
+  # case per source, over the three sources that have a per-frame action at all: pusht 3.62,
+  # aloha 3.50, berkeley_ur5 1.53. epic100 has an episode-level label and is SKIPPED. 8.0 leaves
+  # better than a factor of two above the corpus maximum, so a hit is an outlier by the data's
+  # own standard.
+  #
+  # The design's "5x that channel's p99.9" is not implementable within an episode: with 69-500
+  # samples numpy's p99.9 interpolates between the top two order statistics, so max/p99.9 is
+  # bounded near 1.0 and measured at most 1.57 corpus-wide. See ADR 014.
+  - id: ACTION_JERK
+    enabled: true
+    params:
+      max_ratio: 8.0
+      min_isolation: 5.0 # the jump against the median step of its neighbourhood
+      isolation_window: 5 # half-width of that neighbourhood, in steps
+      min_steps: 20 # below this, p99 is not an order statistic
+
+  # Too short to contain a demonstration, or nothing in it ever moved.
+  #
+  # min_frames: the shortest episode in the corpus is 30 frames (epic100 min = 30, pusht min =
+  # 60, berkeley_ur5 min = 69, aloha exactly 500), so 20 sits below every real episode and
+  # catches only genuinely empty ones.
+  #
+  # max_still_fraction: steps in which no physical channel changed at all, bit-for-bit. Exact
+  # equality is deliberate — a sensor that repeats a value exactly has stopped recording.
+  #
+  # min_travel_fraction: total travel as a fraction of the channel's own declared range, which
+  # is what makes a pusher in pixels comparable to a joint in radians. Only positional channels
+  # are eligible: a gripper's range is actuation (GRIPPER_STUCK's question) and a quaternion
+  # component's [-1, 1] is not a distance. After that restriction pusht is the only source in
+  # this corpus with an eligible bounded channel, and its measured travel_fraction is
+  # 0.588-3.25 (mean 1.52) over 80 episodes; 0.05 sits an order of magnitude below the
+  # quietest real episode. aloha, berkeley_ur5 and epic100 declare no bounded positional
+  # channel, so the test is not attempted there rather than silently passed. See docs/adr/014
+  # and `rdp stats`.
+  - id: STATIC_EPISODE
+    enabled: true
+    params:
+      min_frames: 20
+      max_still_fraction: 0.95
+      min_travel_fraction: 0.05
+
+  # Action written as a readback of state — a capture-script bug that no other rule can see.
+  #
+  # The threshold is on BIT-EQUALITY, never correlation, and ALOHA is the reason: it is
+  # joint-position teleoperated, so its action/state correlation is 0.881-0.969 while
+  # max |a - s| is 0.449-0.883 rad. Measured bit-equal fraction: aloha <= 0.00043, pusht
+  # <= 0.0068. An episode above 0.9 is a different phenomenon entirely.
+  - id: STATE_ACTION_ECHO
+    enabled: true
+    params:
+      tolerance: 1.0e-9 # one float64 round-trip through parquet, and no more
+      max_echo_fraction: 0.9
+
+  # A declared camera is missing, or its video is not as long as the episode.
+  #
+  # Gated on has_video, which by invariant 11 means a standalone decodable file. C's imagery is
+  # inlined in the TFRecord records (has_rgb, not has_video) and no source in this corpus is
+  # configured with `with_video: true`, so this rule is SKIPPED corpus-wide. Its unit tests are
+  # what prove it fires; the corpus proves only that the gate is right.
+  - id: VIDEO_FRAME_MISMATCH
+    enabled: true
+    params:
+      max_frame_delta: 1 # encoders and row counts disagree by a frame at the boundaries
+
+  # The gripper never actuates. Reads channel.is_delta before it reads any value: B's gripper is
+  # an absolute opening (46-106 distinct values per episode, so it never fires), while C's is a
+  # ternary CHANGE command whose resting value is 0 — a rule written against B's convention
+  # would fire on nearly every C episode (ADR 003). For delta grippers the question asked is
+  # whether the cumulative command ever leaves zero; measured, it does not on 5 of C's 12
+  # episodes, which is exactly the "the gripper was never commanded" case worth a human's time.
+  #
+  # min_frames: berkeley_ur5 episodes are 69-121 frames, so 50 keeps all of them in scope while
+  # excusing an episode too short to have reached a grasp.
+  - id: GRIPPER_STUCK
+    enabled: true
+    params:
+      min_frames: 50
+
+  # The end-of-episode marker disagrees with where the episode ends: episodes concatenated (a
+  # marker with ordinary frames after it) or truncated (no marker at all).
+  #
+  # max_terminal_run exists because of a measurement: LeRobot's pusht sets `next.done` on the
+  # LAST TWO frames of all 80 episodes, and aloha on the last one of all 50. A trailing run is
+  # not a concatenation error, so 2 is the corpus maximum and anything longer reads as a flag
+  # that got stuck on. See ADR 015.
+  - id: TERMINATION_CONSISTENCY
+    enabled: true
+    params:
+      max_terminal_run: 2
+
   # How much of the segment the camera-pose layer actually reconstructed. Only source D can
   # reach this: it is gated on has_camera_pose, which varies BETWEEN EPISODES OF THE SAME
   # SOURCE because EPIC-Fields publishes poses for some videos and not others. Verdict is
@@ -32,3 +144,15 @@ rules:
     params:
       min_coverage: 0.8 # fraction of frames carrying a complete pose
       max_gap_s: 0.5 # longest continuous unregistered run, in seconds, not frames
+
+  # D only: the annotation interval that defines the episode is not credible.
+  #
+  # Measured over all 67,217 EPIC-100 training segments: duration p1 = 0.4 s, p50 = 1.57 s, and
+  # 643 segments are shorter than 0.4 s. None ends past its video's duration. 19,162 segments
+  # overlap the following one at all, but only 5,448 overlap it by more than half — so overlap
+  # is normal in this dataset and only a majority overlap is worth reporting.
+  - id: SEGMENT_BOUNDS
+    enabled: true
+    params:
+      min_duration_s: 0.4
+      max_overlap_fraction: 0.5

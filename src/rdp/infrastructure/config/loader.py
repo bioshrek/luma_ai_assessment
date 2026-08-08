@@ -15,9 +15,19 @@ import yaml
 from rdp.domain.action_spec import Channel, SignalLevel
 from rdp.domain.embodiment import Embodiment, EmbodimentRegistry
 from rdp.domain.qc.rule import QCRule
-from rdp.domain.qc.rules.action_range import ActionRange
-from rdp.domain.qc.rules.pose_coverage import PoseCoverage
-from rdp.domain.qc.rules.ts_monotonic import TsMonotonic
+from rdp.domain.qc.rules import (
+    ActionJerk,
+    ActionRange,
+    FpsDrift,
+    GripperStuck,
+    PoseCoverage,
+    SegmentBounds,
+    StateActionEcho,
+    StaticEpisode,
+    TerminationConsistency,
+    TsMonotonic,
+    VideoFrameMismatch,
+)
 from rdp.domain.source import Source
 
 SOURCE_FIELDS = frozenset(
@@ -37,8 +47,16 @@ SOURCE_FIELDS = frozenset(
 
 RULE_REGISTRY: dict[str, Callable[..., QCRule]] = {
     "TS_MONOTONIC": TsMonotonic,
+    "FPS_DRIFT": FpsDrift,
     "ACTION_RANGE": ActionRange,
+    "ACTION_JERK": ActionJerk,
+    "STATIC_EPISODE": StaticEpisode,
+    "STATE_ACTION_ECHO": StateActionEcho,
+    "VIDEO_FRAME_MISMATCH": VideoFrameMismatch,
+    "GRIPPER_STUCK": GripperStuck,
+    "TERMINATION_CONSISTENCY": TerminationConsistency,
     "POSE_COVERAGE": PoseCoverage,
+    "SEGMENT_BOUNDS": SegmentBounds,
 }
 
 

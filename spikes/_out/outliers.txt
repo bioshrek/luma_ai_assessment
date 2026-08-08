@@ -1,0 +1,76 @@
+REVIEW GRIPPER_STUCK            berkeley_ur5:train#000000
+       gripper never actuates over 69 frames: gripper
+       {"min_gripper_travel":0.0,"n_frames":69.0,"n_gripper_channels":1.0}
+REVIEW GRIPPER_STUCK            berkeley_ur5:train#000001
+       gripper never actuates over 74 frames: gripper
+       {"min_gripper_travel":0.0,"n_frames":74.0,"n_gripper_channels":1.0}
+REVIEW GRIPPER_STUCK            berkeley_ur5:train#000003
+       gripper never actuates over 78 frames: gripper
+       {"min_gripper_travel":0.0,"n_frames":78.0,"n_gripper_channels":1.0}
+REVIEW GRIPPER_STUCK            berkeley_ur5:train#000008
+       gripper never actuates over 82 frames: gripper
+       {"min_gripper_travel":0.0,"n_frames":82.0,"n_gripper_channels":1.0}
+REVIEW GRIPPER_STUCK            berkeley_ur5:train#000011
+       gripper never actuates over 99 frames: gripper
+       {"min_gripper_travel":0.0,"n_frames":99.0,"n_gripper_channels":1.0}
+REVIEW SEGMENT_BOUNDS           epic100:P01_01_10
+       2.415 of it overlaps an adjacent segment (> 0.5)
+       {"n_frames":75.0,"overlap_fraction":2.4146341463414647,"overlap_next_s":0.0,"overlap_prev_s":2.9700000000000024,"segment_duration_s":1.2300000000000004}
+FAIL   STATIC_EPISODE           berkeley_ur5:train#000000
+       the busiest channel covered 0.0000 of its declared range (< 0.05)
+       {"n_frames":69.0,"still_fraction":0.0,"travel_fraction":0.0}
+FAIL   STATIC_EPISODE           berkeley_ur5:train#000001
+       the busiest channel covered 0.0000 of its declared range (< 0.05)
+       {"n_frames":74.0,"still_fraction":0.0,"travel_fraction":0.0}
+FAIL   STATIC_EPISODE           berkeley_ur5:train#000003
+       the busiest channel covered 0.0000 of its declared range (< 0.05)
+       {"n_frames":78.0,"still_fraction":0.0,"travel_fraction":0.0}
+FAIL   STATIC_EPISODE           berkeley_ur5:train#000008
+       the busiest channel covered 0.0000 of its declared range (< 0.05)
+       {"n_frames":82.0,"still_fraction":0.0,"travel_fraction":0.0}
+FAIL   STATIC_EPISODE           berkeley_ur5:train#000011
+       the busiest channel covered 0.0000 of its declared range (< 0.05)
+       {"n_frames":99.0,"still_fraction":0.0,"travel_fraction":0.0}
+REVIEW STATIC_EPISODE           epic100:P28_101_1
+       the busiest channel covered 0.0370 of its declared range (< 0.05) [FAIL downgraded to REVIEW: every channel read has origin=estimated, not measured (invariant 13)]
+       {"n_frames":129.0,"still_fraction":0.0,"travel_fraction":0.03702896762101101}
+REVIEW STATIC_EPISODE           epic100:P28_101_10
+       the busiest channel covered 0.0205 of its declared range (< 0.05) [FAIL downgraded to REVIEW: every channel read has origin=estimated, not measured (invariant 13)]
+       {"n_frames":31.0,"still_fraction":0.0,"travel_fraction":0.02051569164781411}
+REVIEW STATIC_EPISODE           epic100:P28_101_100
+       the busiest channel covered 0.0456 of its declared range (< 0.05) [FAIL downgraded to REVIEW: every channel read has origin=estimated, not measured (invariant 13)]
+       {"n_frames":116.0,"still_fraction":0.0,"travel_fraction":0.045577834893170396}
+REVIEW STATIC_EPISODE           epic100:P28_101_103
+       the busiest channel covered 0.0271 of its declared range (< 0.05) [FAIL downgraded to REVIEW: every channel read has origin=estimated, not measured (invariant 13)]
+       {"n_frames":61.0,"still_fraction":0.0,"travel_fraction":0.027103922863400694}
+REVIEW STATIC_EPISODE           epic100:P28_101_106
+       the busiest channel covered 0.0129 of its declared range (< 0.05) [FAIL downgraded to REVIEW: every channel read has origin=estimated, not measured (invariant 13)]
+       {"n_frames":31.0,"still_fraction":0.0,"travel_fraction":0.012894633265192263}
+REVIEW STATIC_EPISODE           epic100:P28_101_107
+       the busiest channel covered 0.0375 of its declared range (< 0.05) [FAIL downgraded to REVIEW: every channel read has origin=estimated, not measured (invariant 13)]
+       {"n_frames":90.0,"still_fraction":0.0,"travel_fraction":0.03754855034128873}
+REVIEW STATIC_EPISODE           epic100:P28_101_108
+       the busiest channel covered 0.0362 of its declared range (< 0.05) [FAIL downgraded to REVIEW: every channel read has origin=estimated, not measured (invariant 13)]
+       {"n_frames":64.0,"still_fraction":0.0,"travel_fraction":0.036207856582112986}
+REVIEW STATIC_EPISODE           epic100:P28_101_11
+       the busiest channel covered 0.0325 of its declared range (< 0.05) [FAIL downgraded to REVIEW: every channel read has origin=estimated, not measured (invariant 13)]
+       {"n_frames":54.0,"still_fraction":0.0,"travel_fraction":0.03247263524998931}
+REVIEW STATIC_EPISODE           epic100:P28_101_110
+       the busiest channel covered 0.0317 of its declared range (< 0.05) [FAIL downgraded to REVIEW: every channel read has origin=estimated, not measured (invariant 13)]
+       {"n_frames":52.0,"still_fraction":0.0,"travel_fraction":0.031743032666921626}
+REVIEW STATIC_EPISODE           epic100:P28_101_111
+       the busiest channel covered 0.0286 of its declared range (< 0.05) [FAIL downgraded to REVIEW: every channel read has origin=estimated, not measured (invariant 13)]
+       {"n_frames":48.0,"still_fraction":0.0,"travel_fraction":0.02858547378072171}
+REVIEW STATIC_EPISODE           epic100:P28_101_113
+       the busiest channel covered 0.0326 of its declared range (< 0.05) [FAIL downgraded to REVIEW: every channel read has origin=estimated, not measured (invariant 13)]
+       {"n_frames":31.0,"still_fraction":0.0,"travel_fraction":0.032589475266105505}
+REVIEW STATIC_EPISODE           epic100:P28_101_115
+       the busiest channel covered 0.0372 of its declared range (< 0.05) [FAIL downgraded to REVIEW: every channel read has origin=estimated, not measured (invariant 13)]
+       {"n_frames":51.0,"still_fraction":0.0,"travel_fraction":0.03717641849888568}
+
+{'source_id': 'aloha_sim_insertion', 'qc_verdict': 'PASS', 'n': 50}
+{'source_id': 'berkeley_ur5', 'qc_verdict': 'FAIL', 'n': 5}
+{'source_id': 'berkeley_ur5', 'qc_verdict': 'PASS', 'n': 7}
+{'source_id': 'epic100', 'qc_verdict': 'PASS', 'n': 47}
+{'source_id': 'epic100', 'qc_verdict': 'REVIEW', 'n': 13}
+{'source_id': 'pusht', 'qc_verdict': 'PASS', 'n': 80}

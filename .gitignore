@@ -20,7 +20,10 @@ config/sources.local.yaml
 # Generated data and artifacts
 store/
 exports/
-reports/
+reports/*
+# ...except the measured distributions every config/qc.yaml threshold cites as its evidence.
+# (`reports/*`, not `reports/`, because git cannot re-include a file under an excluded directory.)
+!reports/qc_stats.md
 # Throwaway store used by scripts/demo_crash_resume.sh
 .demo/
 

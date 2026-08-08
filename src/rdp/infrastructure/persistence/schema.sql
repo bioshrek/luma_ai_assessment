@@ -2,8 +2,11 @@
 -- what makes `kill -9` recoverable.
 --
 -- schema version 2 (M2) adds `episode_state`, `episodes.ruleset_version` and
--- `runs.resumed_from`. Every version bump so far has been additive, so `catalog.py` upgrades an
--- existing file with `ALTER TABLE ... ADD COLUMN` rather than a migration script.
+-- `runs.resumed_from`. Version 3 (M5) adds `episodes.segment_json` and
+-- `episodes.termination_column`, the two facts the QC episode view gained, and version 4 adds
+-- `episodes.stream_specs_json`, which M4 declared on the entity but never stored. Every version
+-- bump so far has been additive, so `catalog.py` upgrades an existing file with
+-- `ALTER TABLE ... ADD COLUMN` rather than a migration script.
 
 CREATE TABLE IF NOT EXISTS sources (
     source_id     TEXT PRIMARY KEY,
@@ -53,6 +56,12 @@ CREATE TABLE IF NOT EXISTS episodes (
     -- The staleness tuple is (content_hash, schema_version, adapter_version, ruleset_version):
     -- upstream changing and us changing share one predicate and one re-run path (design §5).
     ruleset_version   TEXT,
+    -- The annotation interval this episode was cut from, when it was cut from one, and the name
+    -- of the raw column carrying the upstream end-of-episode marker, when one survived.
+    segment_json      TEXT,
+    termination_column TEXT,
+    -- Signals on a clock of their own (invariant 17), each with a `streams/<id>.parquet`.
+    stream_specs_json TEXT,
     first_seen_run    TEXT,
     last_update_run   TEXT,
     updated_at        TEXT,

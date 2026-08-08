@@ -1,0 +1,12 @@
+run run_20260808T165003_656eb7 COMPLETED
+  committed                    50
+  discovered                   0
+  failed                       0
+  fetched                      0
+  normalized                   50
+  qc_done                      50
+  resumed_in_progress          0
+  skipped_already_processed    0
+  stale_renormalize            50
+  stale_reqc                   0
+EXIT=0 for aloha_sim_insertion

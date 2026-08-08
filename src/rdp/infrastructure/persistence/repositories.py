@@ -16,6 +16,7 @@ from rdp.domain.episode_state import EpisodeState
 from rdp.domain.provenance import Provenance
 from rdp.domain.qc.rule import EpisodeVerdict, RuleResult, Verdict
 from rdp.domain.run import IngestionRun
+from rdp.domain.segment import EpisodeSegment
 from rdp.domain.source import Source
 from rdp.domain.stage import IngestionStage
 from rdp.domain.stats import ChannelStats
@@ -26,7 +27,8 @@ _EPISODE_COLUMNS = (
     "fps_nominal, fps_effective, duration_s, capabilities_json, action_spec_json, "
     "state_spec_json, camera_json, provenance_json, boundary_json, raw_extra_json, "
     "raw_columns_json, stats_json, frames_path, qc_verdict, last_error, schema_version, "
-    "adapter_version, ruleset_version, first_seen_run, last_update_run, updated_at"
+    "adapter_version, ruleset_version, segment_json, termination_column, stream_specs_json, "
+    "first_seen_run, last_update_run, updated_at"
 )
 
 # `SignalSpec` exposes dim / physical_dim / space / is_delta as computed fields: they are stored
@@ -149,6 +151,14 @@ _LATEST_QC = """
     ) WHERE recency = 1
 """
 
+_LATEST_QC_METRICS = """
+    SELECT episode_uid, rule_id, metrics_json FROM (
+        SELECT episode_uid, rule_id, metrics_json, ROW_NUMBER() OVER (
+            PARTITION BY episode_uid, rule_id ORDER BY created_at DESC, rowid DESC
+        ) AS recency FROM qc_results
+    ) WHERE recency = 1
+"""
+
 
 class SqliteQCResultRepository:
     def __init__(self, conn: sqlite3.Connection, ruleset_version: str, now: str) -> None:
@@ -202,6 +212,19 @@ class SqliteQCResultRepository:
         for rule_id, verdict, count in self._conn.execute(sql, params).fetchall():
             out.setdefault(rule_id, {})[verdict] = count
         return out
+
+    def metric_samples(self) -> list[tuple[str, str, str, float]]:
+        # `json_each` turns metrics_json into rows, so the distributions behind every threshold
+        # are a query rather than a second implementation of the rules. Grouped by source
+        # because a span in pixels and a span in radians must never land in one distribution.
+        rows = self._conn.execute(
+            f"SELECT e.source_id, q.rule_id, m.key, m.value "
+            f"FROM ({_LATEST_QC_METRICS}) q "
+            f"JOIN episodes e ON e.episode_uid = q.episode_uid, json_each(q.metrics_json) m "
+            "WHERE json_valid(q.metrics_json) AND m.type IN ('integer', 'real') "
+            "ORDER BY e.source_id, q.rule_id, m.key"
+        ).fetchall()
+        return [(row[0], row[1], row[2], float(row[3])) for row in rows]
 
 
 _RUN_COLUMNS = "run_id, started_at, finished_at, status, args_json, stats_json, resumed_from"
@@ -349,6 +372,11 @@ def _episode_to_row(episode: Episode) -> tuple[Any, ...]:
         meta.schema_version if meta else None,
         episode.adapter_version,
         episode.ruleset_version,
+        _dumps(meta.segment.model_dump(mode="json")) if meta and meta.segment else None,
+        meta.termination_column if meta else None,
+        _dumps({k: v.model_dump(mode="json") for k, v in meta.stream_specs.items()})
+        if meta
+        else None,
         episode.first_seen_run,
         episode.last_update_run,
         episode.updated_at,
@@ -376,6 +404,16 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
             fps_nominal=row["fps_nominal"],
             fps_effective=row["fps_effective"],
             duration_s=row["duration_s"],
+            segment=(
+                EpisodeSegment(**json.loads(row["segment_json"]))
+                if row["segment_json"]
+                else None
+            ),
+            termination_column=row["termination_column"],
+            stream_specs={
+                name: _spec_from_json(_dumps(payload))
+                for name, payload in json.loads(row["stream_specs_json"] or "{}").items()
+            },
             schema_version=row["schema_version"],
         )
     stats = {

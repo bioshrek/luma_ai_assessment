@@ -24,10 +24,11 @@ from rdp.domain.errors import InvariantViolation
 from rdp.domain.frames import TIME_COLUMN, FrameTable
 from rdp.domain.provenance import Provenance
 from rdp.domain.qc.rule import EpisodeVerdict
+from rdp.domain.segment import EpisodeSegment
 from rdp.domain.stage import IngestionStage
 from rdp.domain.stats import ChannelStats
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 
 def make_uid(source_id: str, upstream_id: str) -> str:
@@ -52,6 +53,12 @@ class EpisodeMeta(BaseModel):
     fps_nominal: float | None = None
     fps_effective: float | None = None
     duration_s: float | None = None
+    segment: EpisodeSegment | None = None
+    """Set only when this episode is an interval of a longer parent recording."""
+    termination_column: str | None = None
+    """Name of the `raw.*` column carrying the upstream end-of-episode marker, when one survived
+    normalization. The rule must not guess the name: pusht says `raw.next.done`, C says
+    `raw.is_terminal`, and a source may rename it between revisions."""
     raw_extra: dict[str, Any] = Field(default_factory=dict)
     raw_frame_columns: tuple[str, ...] = ()
     stream_specs: dict[str, SignalSpec] = Field(default_factory=dict)
@@ -104,6 +111,20 @@ class EpisodeMeta(BaseModel):
             if spec.clock is not SignalClock.OWN_TIMELINE:
                 raise InvariantViolation(
                     f"stream {stream_id!r} must declare clock='own_timeline' (invariant 17)"
+                )
+        # Invariants 18 and 19, both stated one-directionally: they constrain what we recorded,
+        # never what upstream owes us. A source that has neither is simply silent on both.
+        if self.segment is not None and not self.capabilities.is_segment:
+            raise InvariantViolation("segment is set but is_segment=False (invariant 18)")
+        if self.termination_column is not None:
+            if not self.capabilities.has_termination_signal:
+                raise InvariantViolation(
+                    "termination_column is set but has_termination_signal=False (invariant 19)"
+                )
+            if self.termination_column not in self.raw_frame_columns:
+                raise InvariantViolation(
+                    f"termination_column {self.termination_column!r} is not among "
+                    f"raw_frame_columns (invariant 19)"
                 )
         return self
 

@@ -1,0 +1,12 @@
+run run_20260808T165006_e1341e COMPLETED
+  committed                    60
+  discovered                   0
+  failed                       0
+  fetched                      0
+  normalized                   60
+  qc_done                      60
+  resumed_in_progress          0
+  skipped_already_processed    0
+  stale_renormalize            60
+  stale_reqc                   0
+EXIT=0 for epic100

@@ -118,6 +118,14 @@ class QCResultRepository(Protocol):
 
     def verdict_counts(self, run_id: str | None = None) -> dict[str, dict[str, int]]: ...
 
+    def metric_samples(self) -> list[tuple[str, str, str, float]]:
+        """`(source_id, rule_id, metric, value)` for the latest verdict of every episode+rule.
+
+        The evidence behind every threshold in `config/qc.yaml`, read back out of
+        `metrics_json` by SQL alone — no rule is re-run to produce it.
+        """
+        ...
+
 
 class RunRepository(Protocol):
     def start(self, run: IngestionRun) -> None: ...

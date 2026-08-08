@@ -1,0 +1,230 @@
+
+==============================================================================
+pusht
+==============================================================================
+n_frames: n=80 min=60 p1=65.53 p50=120.5 p99=191.57 p99.9=203.657 max=205
+  short episodes (<20 frames): 0
+  termination patterns: {'raw.next.done: last=True n_mid=1': 80}
+echo max|a-s|: n=80 min=36.4317 p1=36.576 p50=63.3108 p99=132.084 p99.9=140.398 max=141.322
+echo bit-equal fraction: n=80 min=0 p1=0 p50=0 p99=0.00470282 p99.9=0.00663467 max=0.00684932
+echo corr: n=80 min=0.947807 p1=0.947965 p50=0.980903 p99=0.993824 p99.9=0.99394 max=0.993953
+median_dt drift vs nominal: n=80 min=2.23517e-08 p1=4.58956e-08 p50=9.53674e-07 p99=9.53674e-07 p99.9=9.53674e-07 max=9.53674e-07
+fraction of dt > 3x median: n=80 min=0 p1=0 p50=0 p99=0 p99.9=0 max=0
+  span action.ee.x: n=80 min=113 p1=125.64 p50=276.5 p99=406.31 p99.9=414.131 max=415
+  span action.ee.y: n=80 min=134 p1=137.16 p50=282 p99=382.41 p99.9=397.341 max=399
+  span state.ee.x: n=80 min=101.673 p1=118.971 p50=272.326 p99=398.154 p99.9=398.668 max=398.725
+  span state.ee.y: n=80 min=116.908 p1=118.28 p50=271.205 p99=383.131 p99.9=406.929 max=409.573
+  travel action.ee.x: n=80 min=198 p1=222.49 p50=660.5 p99=1314.24 p99.9=1629.92 max=1665
+  travel action.ee.y: n=80 min=277 p1=295.96 p50=732 p99=1476.82 p99.9=1577.78 max=1589
+  travel state.ee.x: n=80 min=182.28 p1=207.375 p50=628.015 p99=1226.72 p99.9=1503.37 max=1534.11
+  travel state.ee.y: n=80 min=258.322 p1=279.624 p50=695.275 p99=1314.61 p99.9=1393.48 max=1402.25
+  max|da| / p99.9|da| action.ee.x: n=80 min=1 p1=1 p50=1.01909 p99=1.12872 p99.9=1.14563 max=1.14751
+  max|da| / p99.9|da| action.ee.y: n=80 min=1 p1=1 p50=1.01547 p99=1.09885 p99.9=1.09966 max=1.09975
+  max|da| / p99.9|da| state.ee.x: n=80 min=1.00005 p1=1.00012 p50=1.00662 p99=1.0351 p99.9=1.03584 max=1.03592
+  max|da| / p99.9|da| state.ee.y: n=80 min=1.00015 p1=1.00028 p50=1.00545 p99=1.02038 p99.9=1.02243 max=1.02265
+
+==============================================================================
+aloha_sim_insertion
+==============================================================================
+n_frames: n=50 min=500 p1=500 p50=500 p99=500 p99.9=500 max=500
+  short episodes (<20 frames): 0
+  termination patterns: {'raw.next.done: last=True n_mid=0': 50}
+echo max|a-s|: n=50 min=0.449427 p1=0.449662 p50=0.571653 p99=0.825486 p99.9=0.877151 max=0.882892
+echo bit-equal fraction: n=50 min=0 p1=0 p50=0 p99=0.000358571 p99.9=0.000421571 max=0.000428571
+echo corr: n=50 min=0.881013 p1=0.89577 p50=0.95086 p99=0.968729 p99.9=0.969133 max=0.969178
+gripper unique values action.left.gripper: n=50 min=48 p1=48 p50=57 p99=69.51 p99.9=69.951 max=70
+gripper unique values action.right.gripper: n=50 min=46 p1=46.98 p50=69 p99=98.65 p99.9=105.265 max=106
+median_dt drift vs nominal: n=50 min=9.53674e-07 p1=9.53674e-07 p50=9.53674e-07 p99=9.53674e-07 p99.9=9.53674e-07 max=9.53674e-07
+fraction of dt > 3x median: n=50 min=0 p1=0 p50=0 p99=0 p99.9=0 max=0
+  span action.left.elbow: n=50 min=0.539961 p1=0.545974 p50=0.643505 p99=0.827214 p99.9=0.844803 max=0.846757
+  span action.left.forearm_roll: n=50 min=0.0460194 p1=0.0572942 p50=0.237767 p99=0.396703 p99.9=0.404144 max=0.404971
+  span action.left.gripper: n=50 min=0.716267 p1=0.718956 p50=0.850442 p99=1.02852 p99.9=1.04102 max=1.04241
+  span action.left.shoulder: n=50 min=0.773126 p1=0.786656 p50=0.909651 p99=1.00666 p99.9=1.0229 max=1.0247
+  span action.left.waist: n=50 min=0.0184078 p1=0.0274276 p50=0.168738 p99=0.341449 p99.9=0.347537 max=0.348214
+  span action.left.wrist_angle: n=50 min=0.785398 p1=0.792915 p50=1.02393 p99=1.40031 p99.9=1.45849 max=1.46495
+  span action.left.wrist_rotate: n=50 min=0.076699 p1=0.0819606 p50=0.227029 p99=0.486395 p99.9=0.491807 max=0.492408
+  span action.right.elbow: n=50 min=0.656544 p1=0.709159 p50=0.849058 p99=1.0807 p99.9=1.08138 max=1.08146
+  span action.right.forearm_roll: n=50 min=0.0306796 p1=0.0660072 p50=0.434117 p99=0.754979 p99.9=0.800304 max=0.80534
+  span action.right.gripper: n=50 min=0.641717 p1=0.641931 p50=0.813202 p99=0.96729 p99.9=0.972088 max=0.972621
+  span action.right.shoulder: n=50 min=0.882039 p1=0.912857 p50=1.04617 p99=1.15825 p99.9=1.16231 max=1.16276
+  span action.right.waist: n=50 min=0.0398835 p1=0.0586748 p50=0.284553 p99=0.467112 p99.9=0.467789 max=0.467864
+  span action.right.wrist_angle: n=50 min=1.05538 p1=1.05989 p50=1.20878 p99=1.5025 p99.9=1.53497 max=1.53858
+  span action.right.wrist_rotate: n=50 min=0.174874 p1=0.175625 p50=0.61666 p99=0.989724 p99.9=1.00325 max=1.00476
+  span state.left.elbow: n=50 min=0.538297 p1=0.543642 p50=0.643019 p99=0.825701 p99.9=0.850543 max=0.853303
+  span state.left.forearm_roll: n=50 min=0.0486644 p1=0.06123 p50=0.241774 p99=0.393406 p99.9=0.397832 max=0.398324
+  span state.left.gripper: n=50 min=0.874165 p1=0.880008 p50=0.970304 p99=1.08292 p99.9=1.09029 max=1.09111
+  span state.left.shoulder: n=50 min=0.787055 p1=0.807077 p50=0.928797 p99=1.03214 p99.9=1.035 max=1.03532
+  span state.left.waist: n=50 min=0.0182611 p1=0.0286122 p50=0.17419 p99=0.34002 p99.9=0.345871 max=0.346521
+  span state.left.wrist_angle: n=50 min=0.782956 p1=0.797902 p50=1.03706 p99=1.35194 p99.9=1.37463 max=1.37715
+  span state.left.wrist_rotate: n=50 min=0.0917842 p1=0.0920824 p50=0.228948 p99=0.48895 p99.9=0.496704 max=0.497566
+  span state.right.elbow: n=50 min=0.659435 p1=0.709803 p50=0.847299 p99=1.07481 p99.9=1.07624 max=1.0764
+  span state.right.forearm_roll: n=50 min=0.110437 p1=0.112814 p50=0.441872 p99=0.806099 p99.9=0.810391 max=0.810868
+  span state.right.gripper: n=50 min=0.662051 p1=0.666084 p50=0.841633 p99=1.06355 p99.9=1.07788 max=1.07948
+  span state.right.shoulder: n=50 min=0.873338 p1=0.901466 p50=1.04044 p99=1.16389 p99.9=1.16669 max=1.16701
+  span state.right.waist: n=50 min=0.0382378 p1=0.0566376 p50=0.291739 p99=0.474167 p99.9=0.477133 max=0.477462
+  span state.right.wrist_angle: n=50 min=1.05675 p1=1.05955 p50=1.22118 p99=1.49614 p99.9=1.52555 max=1.52881
+  span state.right.wrist_rotate: n=50 min=0.17778 p1=0.181967 p50=0.617202 p99=0.991079 p99.9=1.00466 max=1.00617
+  travel action.left.elbow: n=50 min=0.817612 p1=0.817612 p50=1.16813 p99=1.63303 p99.9=1.70541 max=1.71346
+  travel action.left.forearm_roll: n=50 min=0.18101 p1=0.239638 p50=0.539961 p99=0.951222 p99.9=0.957986 max=0.958738
+  travel action.left.gripper: n=50 min=1.41163 p1=1.42026 p50=1.69661 p99=2.07554 p99.9=2.13539 max=2.14204
+  travel action.left.shoulder: n=50 min=0.958738 p1=1.0076 p50=1.25556 p99=1.67905 p99.9=1.68378 max=1.68431
+  travel action.left.waist: n=50 min=0.101243 p1=0.124544 p50=0.428748 p99=0.763631 p99.9=0.784602 max=0.786932
+  travel action.left.wrist_angle: n=50 min=1.21184 p1=1.28175 p50=1.90827 p99=2.90964 p99.9=2.92926 max=2.93144
+  travel action.left.wrist_rotate: n=50 min=0.231631 p1=0.240651 p50=0.553 p99=0.982346 p99.9=1.04255 max=1.04924
+  travel action.right.elbow: n=50 min=1.04157 p1=1.04834 p50=1.34914 p99=2.0525 p99.9=2.2568 max=2.2795
+  travel action.right.forearm_roll: n=50 min=0.211689 p1=0.264305 p50=0.770058 p99=1.4605 p99.9=1.53492 max=1.54318
+  travel action.right.gripper: n=50 min=1.26627 p1=1.28369 p50=1.65473 p99=2.48436 p99.9=2.94309 max=2.99406
+  travel action.right.shoulder: n=50 min=1.38058 p1=1.39562 p50=1.69121 p99=2.13809 p99.9=2.19357 max=2.19973
+  travel action.right.waist: n=50 min=0.205553 p1=0.227351 p50=0.649641 p99=0.973326 p99.9=0.974003 max=0.974078
+  travel action.right.wrist_angle: n=50 min=1.44654 p1=1.49014 p50=2.19052 p99=3.40763 p99.9=3.53819 max=3.5527
+  travel action.right.wrist_rotate: n=50 min=0.446388 p1=0.447892 p50=1.17043 p99=1.71347 p99.9=1.81562 max=1.82697
+  travel state.left.elbow: n=50 min=0.767899 p1=0.7726 p50=1.1247 p99=1.5846 p99.9=1.66096 max=1.66944
+  travel state.left.forearm_roll: n=50 min=0.253575 p1=0.285796 p50=0.699045 p99=1.17914 p99.9=1.32465 max=1.34082
+  travel state.left.gripper: n=50 min=1.48546 p1=1.49564 p50=1.74099 p99=2.58841 p99.9=2.69616 max=2.70813
+  travel state.left.shoulder: n=50 min=0.984344 p1=0.987257 p50=1.17754 p99=1.52357 p99.9=1.54935 max=1.55221
+  travel state.left.waist: n=50 min=0.0371652 p1=0.0532576 p50=0.321529 p99=0.641802 p99.9=0.66474 max=0.667289
+  travel state.left.wrist_angle: n=50 min=1.26827 p1=1.33655 p50=1.94234 p99=2.98275 p99.9=3.00231 max=3.00448
+  travel state.left.wrist_rotate: n=50 min=0.345559 p1=0.351806 p50=0.633716 p99=1.12962 p99.9=1.2017 max=1.20971
+  travel state.right.elbow: n=50 min=1.02138 p1=1.02262 p50=1.33739 p99=2.03297 p99.9=2.25419 max=2.27877
+  travel state.right.forearm_roll: n=50 min=0.426267 p1=0.439724 p50=1.08137 p99=1.76957 p99.9=1.77857 max=1.77957
+  travel state.right.gripper: n=50 min=1.45836 p1=1.46672 p50=1.87647 p99=2.83568 p99.9=2.91256 max=2.9211
+  travel state.right.shoulder: n=50 min=1.20817 p1=1.21619 p50=1.51001 p99=1.99161 p99.9=2.03719 max=2.04225
+  travel state.right.waist: n=50 min=0.0873997 p1=0.102395 p50=0.544403 p99=0.851811 p99.9=0.861171 max=0.862211
+  travel state.right.wrist_angle: n=50 min=1.48888 p1=1.518 p50=2.2249 p99=3.40918 p99.9=3.48588 max=3.4944
+  travel state.right.wrist_rotate: n=50 min=0.51963 p1=0.522351 p50=1.32186 p99=1.84702 p99.9=1.92256 max=1.93096
+  max|da| / p99.9|da| action.left.elbow: n=50 min=1 p1=1 p50=1.03688 p99=1.15549 p99.9=1.17363 max=1.17564
+  max|da| / p99.9|da| action.left.forearm_roll: n=50 min=1 p1=1 p50=1.05857 p99=1.21464 p99.9=1.22814 max=1.22963
+  max|da| / p99.9|da| action.left.gripper: n=50 min=1.00187 p1=1.00199 p50=1.02585 p99=1.17157 p99.9=1.17567 max=1.17612
+  max|da| / p99.9|da| action.left.shoulder: n=50 min=1 p1=1 p50=1.03434 p99=1.22448 p99.9=1.28948 max=1.2967
+  max|da| / p99.9|da| action.left.waist: n=50 min=1 p1=1 p50=1.04742 p99=1.19904 p99.9=1.19904 max=1.19904
+  max|da| / p99.9|da| action.left.wrist_angle: n=50 min=1 p1=1 p50=1.03145 p99=1.14068 p99.9=1.14929 max=1.15025
+  max|da| / p99.9|da| action.left.wrist_rotate: n=50 min=1 p1=1 p50=1.05387 p99=1.21464 p99.9=1.22814 max=1.22963
+  max|da| / p99.9|da| action.right.elbow: n=50 min=1 p1=1 p50=1.03018 p99=1.18195 p99.9=1.22891 max=1.23413
+  max|da| / p99.9|da| action.right.forearm_roll: n=50 min=1 p1=1 p50=1.07286 p99=1.18357 p99.9=1.18423 max=1.18431
+  max|da| / p99.9|da| action.right.gripper: n=50 min=1.00049 p1=1.00139 p50=1.02008 p99=1.13299 p99.9=1.14691 max=1.14845
+  max|da| / p99.9|da| action.right.shoulder: n=50 min=1 p1=1 p50=1.03434 p99=1.14172 p99.9=1.15199 max=1.15314
+  max|da| / p99.9|da| action.right.waist: n=50 min=1 p1=1 p50=1.05241 p99=1.19295 p99.9=1.19843 max=1.19904
+  max|da| / p99.9|da| action.right.wrist_angle: n=50 min=1 p1=1 p50=1.02373 p99=1.22191 p99.9=1.28137 max=1.28798
+  max|da| / p99.9|da| action.right.wrist_rotate: n=50 min=1 p1=1 p50=1.04394 p99=1.1918 p99.9=1.20577 max=1.20733
+  max|da| / p99.9|da| state.left.elbow: n=50 min=1.00056 p1=1.00064 p50=1.0095 p99=1.04983 p99.9=1.05127 max=1.05144
+  max|da| / p99.9|da| state.left.forearm_roll: n=50 min=1.00051 p1=1.00149 p50=1.03515 p99=1.29376 p99.9=1.33853 max=1.3435
+  max|da| / p99.9|da| state.left.gripper: n=50 min=1.00162 p1=1.00173 p50=1.01545 p99=1.12552 p99.9=1.1358 max=1.13694
+  max|da| / p99.9|da| state.left.shoulder: n=50 min=1.00081 p1=1.00218 p50=1.05569 p99=1.55509 p99.9=1.56716 max=1.5685
+  max|da| / p99.9|da| state.left.waist: n=50 min=1.00051 p1=1.00094 p50=1.06192 p99=1.33785 p99.9=1.34197 max=1.34243
+  max|da| / p99.9|da| state.left.wrist_angle: n=50 min=1.00049 p1=1.00058 p50=1.00775 p99=1.05597 p99.9=1.06074 max=1.06127
+  max|da| / p99.9|da| state.left.wrist_rotate: n=50 min=1.00239 p1=1.00325 p50=1.03354 p99=1.3005 p99.9=1.36677 max=1.37414
+  max|da| / p99.9|da| state.right.elbow: n=50 min=1.00026 p1=1.00033 p50=1.00881 p99=1.05823 p99.9=1.06634 max=1.06725
+  max|da| / p99.9|da| state.right.forearm_roll: n=50 min=1.00136 p1=1.00156 p50=1.05204 p99=1.27211 p99.9=1.29576 max=1.29839
+  max|da| / p99.9|da| state.right.gripper: n=50 min=1.00002 p1=1.00006 p50=1.00911 p99=1.10986 p99.9=1.14715 max=1.15129
+  max|da| / p99.9|da| state.right.shoulder: n=50 min=1.00456 p1=1.00478 p50=1.05991 p99=1.17732 p99.9=1.1883 max=1.18952
+  max|da| / p99.9|da| state.right.waist: n=50 min=1.00041 p1=1.00077 p50=1.03273 p99=1.29303 p99.9=1.3096 max=1.31145
+  max|da| / p99.9|da| state.right.wrist_angle: n=50 min=1.00032 p1=1.00065 p50=1.00878 p99=1.06368 p99.9=1.06426 max=1.06432
+  max|da| / p99.9|da| state.right.wrist_rotate: n=50 min=1.00175 p1=1.0018 p50=1.04447 p99=1.35897 p99.9=1.46991 max=1.48224
+
+==============================================================================
+berkeley_ur5
+==============================================================================
+n_frames: n=12 min=69 p1=69.55 p50=97 p99=120.67 p99.9=120.967 max=121
+  short episodes (<20 frames): 0
+  termination patterns: {'raw.is_terminal: last=False n_mid=0': 12, 'raw.is_last: last=False n_mid=0': 12}
+gripper unique values action.gripper: n=12 min=1 p1=1 p50=3 p99=3 p99.9=3 max=3
+median_dt drift vs nominal: n=12 min=0 p1=1.52656e-17 p50=2.77556e-16 p99=2.37588e-15 p99.9=2.48579e-15 max=2.498e-15
+fraction of dt > 3x median: n=12 min=0 p1=0 p50=0 p99=0 p99.9=0 max=0
+  span action.ee.drx: n=12 min=0.0146667 p1=0.016259 p50=0.0425714 p99=0.0858191 p99.9=0.0894962 max=0.0899048
+  span action.ee.dry: n=12 min=0.0220952 p1=0.0223886 p50=0.0534286 p99=0.133333 p99.9=0.133333 max=0.133333
+  span action.ee.drz: n=12 min=0.0224762 p1=0.0232305 p50=0.059619 p99=0.118162 p99.9=0.12033 max=0.120571
+  span action.ee.dx: n=12 min=0.0361143 p1=0.0362463 p50=0.0399143 p99=0.04 p99.9=0.04 max=0.04
+  span action.ee.dy: n=12 min=0.0279429 p1=0.0279554 p50=0.0318571 p99=0.0367623 p99.9=0.0367962 max=0.0368
+  span action.ee.dz: n=12 min=0.0350286 p1=0.0350349 p50=0.0391714 p99=0.04 p99.9=0.04 max=0.04
+  span action.flag.terminate_episode: n=12 min=0 p1=0 p50=0 p99=0 p99.9=0 max=0
+  span action.gripper: n=12 min=0 p1=0 p50=2 p99=2 p99.9=2 max=2
+  span state.robot_state_00: n=12 min=0.319436 p1=0.336635 p50=0.686215 p99=0.937425 p99.9=0.943189 max=0.943829
+  span state.robot_state_01: n=12 min=0.705576 p1=0.707558 p50=0.805502 p99=1.34284 p99.9=1.38819 max=1.39323
+  span state.robot_state_02: n=12 min=0.390518 p1=0.396849 p50=0.640892 p99=0.948702 p99.9=0.954738 max=0.955409
+  span state.robot_state_03: n=12 min=0.475696 p1=0.481 p50=0.631295 p99=1.21075 p99.9=1.22655 max=1.22831
+  span state.robot_state_04: n=12 min=0.0727963 p1=0.0744854 p50=0.140874 p99=0.328189 p99.9=0.328824 max=0.328894
+  span state.robot_state_05: n=12 min=0.442424 p1=0.447547 p50=0.798165 p99=1.08395 p99.9=1.09867 max=1.10031
+  span state.robot_state_06: n=12 min=0.108474 p1=0.113101 p50=0.18802 p99=0.293882 p99.9=0.296111 max=0.296359
+  span state.robot_state_07: n=12 min=0.147382 p1=0.154586 p50=0.289606 p99=0.48114 p99.9=0.483828 max=0.484126
+  span state.robot_state_08: n=12 min=0.160164 p1=0.160227 p50=0.176526 p99=0.287199 p99.9=0.297536 max=0.298685
+  span state.robot_state_09: n=12 min=0.0330204 p1=0.0359254 p50=0.102967 p99=0.148462 p99.9=0.149869 max=0.150025
+  span state.robot_state_10: n=12 min=0.0438201 p1=0.0461339 p50=0.108552 p99=0.176046 p99.9=0.181522 max=0.18213
+  span state.robot_state_11: n=12 min=0.0423035 p1=0.0437867 p50=0.11298 p99=0.225829 p99.9=0.233594 max=0.234456
+  span state.robot_state_12: n=12 min=0.0429118 p1=0.045081 p50=0.0939737 p99=0.389937 p99.9=0.395833 max=0.396489
+  span state.robot_state_13: n=12 min=0 p1=0 p50=1 p99=1 p99.9=1 max=1
+  span state.robot_state_14: n=12 min=0 p1=0 p50=1 p99=1 p99.9=1 max=1
+  travel action.ee.drx: n=12 min=0.0750476 p1=0.0798667 p50=0.217333 p99=0.311413 p99.9=0.311941 max=0.312
+  travel action.ee.dry: n=12 min=0.088 p1=0.0910381 p50=0.232762 p99=0.436863 p99.9=0.445858 max=0.446857
+  travel action.ee.drz: n=12 min=0.0598095 p1=0.0646705 p50=0.20419 p99=0.485478 p99.9=0.498376 max=0.49981
+  travel action.ee.dx: n=12 min=0.106057 p1=0.106239 p50=0.134629 p99=0.194161 p99.9=0.195508 max=0.195657
+  travel action.ee.dy: n=12 min=0.0672 p1=0.0683817 p50=0.112857 p99=0.164093 p99.9=0.165604 max=0.165771
+  travel action.ee.dz: n=12 min=0.0906286 p1=0.0914394 p50=0.152857 p99=0.271008 p99.9=0.276529 max=0.277143
+  travel action.flag.terminate_episode: n=12 min=0 p1=0 p50=0 p99=0 p99.9=0 max=0
+  travel action.gripper: n=12 min=0 p1=0 p50=4 p99=4 p99.9=4 max=4
+  travel state.robot_state_00: n=12 min=0.586865 p1=0.617854 p50=1.20641 p99=1.61757 p99.9=1.62649 max=1.62749
+  travel state.robot_state_01: n=12 min=1.07849 p1=1.09026 p50=1.52007 p99=2.19458 p99.9=2.1982 max=2.1986
+  travel state.robot_state_02: n=12 min=0.544478 p1=0.584396 p50=1.16849 p99=1.29689 p99.9=1.29746 max=1.29752
+  travel state.robot_state_03: n=12 min=0.828315 p1=0.828368 p50=1.21973 p99=1.87883 p99.9=1.90538 max=1.90833
+  travel state.robot_state_04: n=12 min=0.149169 p1=0.151052 p50=0.338543 p99=0.580448 p99.9=0.596995 max=0.598834
+  travel state.robot_state_05: n=12 min=0.873168 p1=0.903564 p50=1.33506 p99=1.87248 p99.9=1.89303 max=1.89532
+  travel state.robot_state_06: n=12 min=0.137592 p1=0.153952 p50=0.344759 p99=0.406838 p99.9=0.408537 max=0.408725
+  travel state.robot_state_07: n=12 min=0.296854 p1=0.309304 p50=0.593578 p99=0.932126 p99.9=0.950784 max=0.952857
+  travel state.robot_state_08: n=12 min=0.301565 p1=0.303678 p50=0.390678 p99=0.521157 p99.9=0.523848 max=0.524148
+  travel state.robot_state_09: n=12 min=0.0370055 p1=0.0406411 p50=0.131912 p99=0.276781 p99.9=0.277151 max=0.277192
+  travel state.robot_state_10: n=12 min=0.0545515 p1=0.0565724 p50=0.124103 p99=0.260287 p99.9=0.260716 max=0.260763
+  travel state.robot_state_11: n=12 min=0.0526314 p1=0.0605428 p50=0.150348 p99=0.358839 p99.9=0.36479 max=0.365451
+  travel state.robot_state_12: n=12 min=0.0757488 p1=0.0805143 p50=0.176543 p99=0.509311 p99.9=0.512744 max=0.513126
+  travel state.robot_state_13: n=12 min=0 p1=0 p50=2 p99=2 p99.9=2 max=2
+  travel state.robot_state_14: n=12 min=0 p1=0 p50=4 p99=4 p99.9=4 max=4
+  max|da| / p99.9|da| action.ee.drx: n=12 min=1.00095 p1=1.0012 p50=1.0184 p99=1.06243 p99.9=1.06267 max=1.0627
+  max|da| / p99.9|da| action.ee.dry: n=12 min=1.00327 p1=1.00328 p50=1.01238 p99=1.05883 p99.9=1.0613 max=1.06157
+  max|da| / p99.9|da| action.ee.drz: n=12 min=1 p1=1.00078 p50=1.02345 p99=1.04891 p99.9=1.04968 max=1.04976
+  max|da| / p99.9|da| action.ee.dx: n=12 min=1.00105 p1=1.00206 p50=1.01886 p99=1.03409 p99.9=1.03419 max=1.0342
+  max|da| / p99.9|da| action.ee.dy: n=12 min=1.0077 p1=1.00794 p50=1.03035 p99=1.06204 p99.9=1.06214 max=1.06215
+  max|da| / p99.9|da| action.ee.dz: n=12 min=1 p1=1 p50=1.00199 p99=1.0422 p99.9=1.04412 max=1.04433
+  max|da| / p99.9|da| action.gripper: n=7 min=1 p1=1 p50=1 p99=1 p99.9=1 max=1
+  max|da| / p99.9|da| state.robot_state_00: n=12 min=1.00003 p1=1.00006 p50=1.00367 p99=1.00852 p99.9=1.00872 max=1.00874
+  max|da| / p99.9|da| state.robot_state_01: n=12 min=1.00025 p1=1.00027 p50=1.00211 p99=1.00804 p99.9=1.00835 max=1.00838
+  max|da| / p99.9|da| state.robot_state_02: n=12 min=1.00016 p1=1.00023 p50=1.00483 p99=1.01456 p99.9=1.01515 max=1.01522
+  max|da| / p99.9|da| state.robot_state_03: n=12 min=1.00041 p1=1.00044 p50=1.00401 p99=1.00822 p99.9=1.00826 max=1.00826
+  max|da| / p99.9|da| state.robot_state_04: n=12 min=1.00051 p1=1.00071 p50=1.00957 p99=1.03188 p99.9=1.0332 max=1.03335
+  max|da| / p99.9|da| state.robot_state_05: n=12 min=1.00047 p1=1.00056 p50=1.00376 p99=1.01326 p99.9=1.01363 max=1.01367
+  max|da| / p99.9|da| state.robot_state_06: n=12 min=1.00025 p1=1.00034 p50=1.00265 p99=1.01515 p99.9=1.01583 max=1.01591
+  max|da| / p99.9|da| state.robot_state_07: n=12 min=1.00003 p1=1.00003 p50=1.00094 p99=1.0046 p99.9=1.00485 max=1.00488
+  max|da| / p99.9|da| state.robot_state_08: n=12 min=1.00003 p1=1.00004 p50=1.00332 p99=1.00848 p99.9=1.00859 max=1.0086
+  max|da| / p99.9|da| state.robot_state_09: n=12 min=1.0008 p1=1.0008 p50=1.00515 p99=1.01221 p99.9=1.01258 max=1.01262
+  max|da| / p99.9|da| state.robot_state_10: n=12 min=1.00073 p1=1.00084 p50=1.00588 p99=1.01294 p99.9=1.0132 max=1.01323
+  max|da| / p99.9|da| state.robot_state_11: n=12 min=1.00087 p1=1.00088 p50=1.0037 p99=1.03482 p99.9=1.03774 max=1.03806
+  max|da| / p99.9|da| state.robot_state_12: n=12 min=1.00105 p1=1.00127 p50=1.00455 p99=1.02385 p99.9=1.02505 max=1.02518
+  max|da| / p99.9|da| state.robot_state_13: n=7 min=1 p1=1 p50=1 p99=1 p99.9=1 max=1
+  max|da| / p99.9|da| state.robot_state_14: n=7 min=1 p1=1 p50=1 p99=1 p99.9=1 max=1
+
+==============================================================================
+epic100
+==============================================================================
+n_frames: n=60 min=30 p1=30.59 p50=69 p99=493.39 p99.9=535.339 max=540
+  short episodes (<20 frames): 0
+  termination patterns: {}
+median_dt drift vs nominal: n=60 min=0 p1=1.02349e-16 p50=8.67362e-16 p99=2.28755e-15 p99.9=2.28755e-15 max=2.28755e-15
+fraction of dt > 3x median: n=60 min=0 p1=0 p50=0 p99=0 p99.9=0 max=0
+  span state.cam_q.w: n=20 min=0.00178733 p1=0.00310786 p50=0.0663519 p99=0.194821 p99.9=0.195549 max=0.19563
+  span state.cam_q.x: n=20 min=0.00500783 p1=0.00629527 p50=0.041375 p99=0.0898153 p99.9=0.0916784 max=0.0918854
+  span state.cam_q.y: n=20 min=0.00458981 p1=0.00464159 p50=0.0161613 p99=0.108654 p99.9=0.115535 max=0.116299
+  span state.cam_q.z: n=20 min=0.00236771 p1=0.00272777 p50=0.0148753 p99=0.181131 p99.9=0.203996 max=0.206537
+  span state.cam_t.x: n=20 min=0.0789465 p1=0.0934329 p50=0.373908 p99=1.13248 p99.9=1.16535 max=1.169
+  span state.cam_t.y: n=20 min=0.0710765 p1=0.0752121 p50=0.231921 p99=1.16978 p99.9=1.30626 max=1.32142
+  span state.cam_t.z: n=20 min=0.0397469 p1=0.0437852 p50=0.221373 p99=1.10878 p99.9=1.16984 max=1.17663
+  travel state.cam_q.w: n=20 min=0.0023452 p1=0.00371063 p50=0.0733843 p99=0.30804 p99.9=0.326239 max=0.328261
+  travel state.cam_q.x: n=20 min=0.00852339 p1=0.00938921 p50=0.0496885 p99=0.225527 p99.9=0.249366 max=0.252015
+  travel state.cam_q.y: n=20 min=0.0103504 p1=0.0104944 p50=0.032602 p99=0.160397 p99.9=0.166879 max=0.167599
+  travel state.cam_q.z: n=20 min=0.00371868 p1=0.00446703 p50=0.0231183 p99=0.187654 p99.9=0.204648 max=0.206537
+  travel state.cam_t.x: n=20 min=0.153338 p1=0.155314 p50=0.476301 p99=2.06523 p99.9=2.17373 max=2.18578
+  travel state.cam_t.y: n=20 min=0.0987665 p1=0.103179 p50=0.332538 p99=1.30827 p99.9=1.3201 max=1.32142
+  travel state.cam_t.z: n=20 min=0.0703013 p1=0.0760291 p50=0.370141 p99=1.16834 p99.9=1.1758 max=1.17663
+  max|da| / p99.9|da| state.cam_q.w: n=20 min=1.00033 p1=1.00038 p50=1.00406 p99=1.06028 p99.9=1.06631 max=1.06698
+  max|da| / p99.9|da| state.cam_q.x: n=20 min=1.00003 p1=1.00004 p50=1.00487 p99=1.04113 p99.9=1.04628 max=1.04686
+  max|da| / p99.9|da| state.cam_q.y: n=20 min=1.00058 p1=1.00059 p50=1.00617 p99=1.05246 p99.9=1.05366 max=1.05379
+  max|da| / p99.9|da| state.cam_q.z: n=20 min=1.00072 p1=1.00077 p50=1.00569 p99=1.0575 p99.9=1.05794 max=1.05798
+  max|da| / p99.9|da| state.cam_t.x: n=20 min=1.00019 p1=1.0002 p50=1.00545 p99=1.05074 p99.9=1.05302 max=1.05327
+  max|da| / p99.9|da| state.cam_t.y: n=20 min=1.00039 p1=1.00051 p50=1.0032 p99=1.03276 p99.9=1.03354 max=1.03362
+  max|da| / p99.9|da| state.cam_t.z: n=20 min=1.00057 p1=1.00058 p50=1.0041 p99=1.05229 p99.9=1.05312 max=1.05321

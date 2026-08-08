@@ -1,0 +1,11 @@
+n_frames 69 task sweep the green cloth to the left side of the table
+action space mixed dim 8 physical_dim 7
+state space unknown dim 15
+flag is_physical False flag.terminate_episode
+ts synthesized@5Hz adapter rlds@1.0.0+layout=train:412-shards@0.1.0
+transforms ['drop_channels', 'trim_trailing_steps', 'drop_inline_frames']
+rlds {'declared_shard_layout': 'train:412-shards@0.1.0', 'episode_index': 0, 'index_in_shard': 0, 'measured_shard_layout': 'train:412-shards@0.1.0', 'n_steps_upstream': 71, 'n_trailing_boundary_steps_trimmed': 2, 'shard_name': 'berkeley_autolab_ur5-train.tfrecord-00000-of-00412', 'split': 'train', 'terminal_reward': 1.0, 'trimmed_step_is_terminal': [True, True], 'trimmed_step_rewards': [1.0, 0.0]}
+cams [('hand_image', 'wrist', 'inline_frames', True, [480, 640], 3), ('image', 'static', 'inline_frames', True, [480, 640], 3), ('image_with_depth', 'static', 'inline_frames', True, [480, 640], 1)]
+caps rgb/video/depth True False True
+raw cols ['raw.is_first', 'raw.is_last', 'raw.is_terminal', 'raw.reward']
+boundary {'end_reason': 'unknown', 'is_truncated': False, 'success': None, 'success_adjudicator': 'policy', 'termination_source': 'policy_flag'}

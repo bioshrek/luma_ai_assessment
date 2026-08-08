@@ -18,6 +18,9 @@ from rdp.interfaces.presenters.report_md import (
     render_json,
     render_markdown,
 )
+from rdp.interfaces.presenters.stats_md import print_stats
+from rdp.interfaces.presenters.stats_md import render_json as render_stats_json
+from rdp.interfaces.presenters.stats_md import render_markdown as render_stats_markdown
 from rdp.interfaces.wiring import DEFAULT_CONFIG, DEFAULT_STORE, Container
 
 app = typer.Typer(help="Robot Demonstration Pipeline", no_args_is_help=True)
@@ -143,6 +146,25 @@ def report(
         console.print(f"wrote {published}")
     if out is not None:
         atomic_write_text(out, markdown)
+        console.print(f"wrote {out}")
+
+
+@app.command()
+def stats(
+    out: Annotated[Path | None, typer.Option("--out", help="Also write markdown here.")] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
+    store: StoreOption = DEFAULT_STORE,
+    config: ConfigOption = DEFAULT_CONFIG,
+) -> None:
+    """Show the measured distribution of every QC metric — the evidence behind the thresholds."""
+    container = Container(store=store, config=config)
+    result = container.stats()()
+    if as_json:
+        console.print_json(render_stats_json(result))
+    else:
+        print_stats(result, console)
+    if out is not None:
+        atomic_write_text(out, render_stats_markdown(result))
         console.print(f"wrote {out}")
 
 
