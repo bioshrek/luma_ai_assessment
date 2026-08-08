@@ -494,26 +494,33 @@ rather than guesses, and with every known false-positive trap explicitly defende
 
 ```bash
 rdp stats --out reports/qc_stats.md      # distributions used to pick thresholds
-rdp run --all-sources                    # full corpus
+for s in pusht aloha_sim_insertion berkeley_ur5 epic100; do rdp run --source "$s"; done
 rdp report
 pytest tests/unit/qc -q                  # every rule has at least one positive and one negative case
 ```
 
 **Exit criteria**
 
-- [ ] 10 rules implemented, each a pure function of `(FrameTable, EpisodeMeta) -> Verdict`, each
+- [x] 10 rules implemented, each a pure function of `(FrameTable, EpisodeMeta) -> Verdict`, each
       with unit tests proving it fires on synthetic bad data and stays silent on good data.
-- [ ] `STATE_ACTION_ECHO` does **not** fire on ALOHA (B) — the correlation trap is defended by
+      _Eleven, in fact: `SEGMENT_BOUNDS` and `POSE_COVERAGE` are both D-only._
+- [x] `STATE_ACTION_ECHO` does **not** fire on ALOHA (B) — the correlation trap is defended by
       bit-equality, and a test asserts `corr > 0.999` yet `PASS`.
-- [ ] `ACTION_JERK` does **not** fire on every C episode — a test asserts `terminate_episode` is
+- [x] `ACTION_JERK` does **not** fire on every C episode — a test asserts `terminate_episode` is
       excluded from statistics via `physical_view()`.
-- [ ] `TS_MONOTONIC` on C yields `SKIPPED(reason=synthetic_timestamp)`, never `PASS`.
-- [ ] `qc_results.metrics_json` holds numeric values for every rule, and the report's hit rates
-      are computed from them by SQL alone.
-- [ ] Thresholds in `config/qc.yaml` each carry a comment citing the measured statistic that
+- [x] `TS_MONOTONIC` on C yields `SKIPPED(reason=synthetic_timestamp)`, never `PASS`.
+      _True of all four sources: none publishes a real clock._
+- [x] `qc_results.metrics_json` holds numeric values for every rule, and the report's hit rates
+      are computed from them by SQL alone. `rdp stats` reads the distributions back the same way.
+- [x] Thresholds in `config/qc.yaml` each carry a comment citing the measured statistic that
       justifies them.
-- [ ] Corpus-wide FAIL rate is sane (not 0%, not >30%); outliers are manually inspected and the
-      inspection is recorded.
+- [~] Corpus-wide FAIL rate is sane (not 0%, not >30%); outliers are manually inspected and the
+  inspection is recorded. **196 PASS / 6 REVIEW / 0 FAIL over 202 episodes.** The first
+  calibration pass produced 5 FAILs and 12 REVIEWs; all 17 were inspected, all 17 were false
+  positives from one cause, and the rule was fixed rather than the threshold. The remaining
+  6 REVIEWs are real findings and are itemised in
+  [ADR 014](adr/014-qc-thresholds-from-measured-distributions.md), which also records why
+  manufacturing a FAIL to satisfy this criterion was rejected.
 
 ---
 

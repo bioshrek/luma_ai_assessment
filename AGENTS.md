@@ -21,14 +21,14 @@ fixed-width vector is wrong and is explicitly rejected by the design.
 
 ## Current State
 
-**M0–M4 are complete. M5 is next: the full QC ruleset with data-driven thresholds.**
+**M0–M5 are complete. M6 is next: export strategies (`balanced`) and the report.**
 
 `rdp run && rdp export && rdp report` works end to end on real data for **all four** sources —
 `pusht`, `aloha_sim_insertion`, `berkeley_ur5` and `epic100`: **202 episodes committed, 0
-failed**. **Both acceptance scenarios are green and machine-checked**: a crash at any of the
-eight checkpoints resumes to a byte-identical result, and a re-run on unchanged upstream writes
-nothing at all. `scripts/demo_crash_resume.sh` reproduces the reviewer's scenario with a real
-`kill -9`.
+failed**, and the full ruleset now grades them **196 PASS / 6 REVIEW / 0 FAIL**. **Both
+acceptance scenarios are green and machine-checked**: a crash at any of the eight checkpoints
+resumes to a byte-identical result, and a re-run on unchanged upstream writes nothing at all.
+`scripts/demo_crash_resume.sh` reproduces the reviewer's scenario with a real `kill -9`.
 
 M3 proved the adapter seam. Adding **B cost no Python at all** (one `sources.yaml` entry, one
 `embodiments.yaml` entry, one fixture, sharing `LeRobotAdapter` with A); adding **C** cost one
@@ -43,6 +43,19 @@ run against real servers found **four** defects, one of them two milestones old 
 50 aloha episodes. See ADR 012 and ADR 013 — the theme is that a fixture must be a scale model of
 the data's _structure_, not of its _size_.
 
+M5 set every threshold from a measured distribution rather than a guess — `rdp stats` writes
+`reports/qc_stats.md`, and each parameter in `config/qc.yaml` carries the number it was derived
+from. Two findings are worth carrying forward. First, a threshold can be **unreachable**: the
+first ACTION_JERK draft compared `max` against `p99.9`, a ratio that never exceeded 1.57 anywhere
+in the corpus, so a 5× rule could not have fired on any input (ADR 014). Second, a rule must
+check that a channel's declared range _means_ what the rule assumes — STATIC_EPISODE's travel
+test read a gripper's `[-1, 1]` and a camera quaternion's `[-1, 1]` as distances and flagged 17
+healthy episodes. The corpus FAIL rate is **0%** and was left that way; manufacturing a FAIL to
+prove the rules work was explicitly rejected. See ADR 014 and ADR 015 — the latter also records a
+latent M4 defect M5 surfaced: `stream_specs` lived on `EpisodeMeta` but was never persisted, so a
+REDO_NORMALIZE hid it and the first REDO_QC failed 40 of 60 epic episodes. **Persist every field
+of an aggregate, and test the round trip, not the write.**
+
 ```
 docs/technical_design.md      # the design authority — domain model, schema, QC, layering
 docs/implementation_plan.md   # milestones M0–M8, each with verification commands
@@ -55,23 +68,29 @@ docs/adr/008..009             # M3's: B's channel-level units + unverifiable gri
 docs/adr/010..013             # M4's: EPIC's two frame numberings; layered availability and
                               #   signal origins; gyro/accel are two clocks (supersedes 011 §3);
                               #   LeRobot's global row index + qc_results is history, not state
+docs/adr/014..015             # M5's: thresholds from measured distributions and the unreachable
+                              #   ratio; episode facts (segment, termination_column) and the
+                              #   unpersisted stream_specs that only REDO_QC could expose
 docs/assessment.md            # original requirements (Chinese)
 docs/assessment_for_ai.md     # requirements, agent-facing
 docs/ai_chat_sessions/*.json  # raw AI transcripts — archival, do not edit or translate
 pyproject.toml                # uv project; `spike` dependency group is M0-only and throwaway
 config/{sources,embodiments,qc}.yaml   # sources, per-embodiment channel semantics, ruleset
+                              #   every qc.yaml threshold cites the measurement it came from
+reports/qc_stats.md           # `rdp stats` output — the distributions those thresholds read
 spikes/probe_*.py             # throwaway probes; _out/*.txt is their captured output
 src/rdp/{domain,application,infrastructure,interfaces}/
-tests/{unit,integration,acceptance,fakes,fixtures}/     # 172 tests, ~25 s; domain coverage 97.7%
+tests/{unit,integration,acceptance,fakes,fixtures}/     # 231 tests; domain coverage 97.1%
 scripts/make_fixtures.py      # regenerates the four mini fixtures (~505 KB total)
 scripts/demo_crash_resume.sh  # real kill -9 against a throwaway store under .demo/
 ```
 
-**Read `docs/adr/000`–`013` before touching an adapter or the resume logic.** M0 measured four
+**Read `docs/adr/000`–`015` before touching an adapter or the resume logic.** M0 measured four
 things the design had guessed wrong, M1 a fifth, M2 corrected one exit criterion that was
 physically unachievable as written, M3 corrected C's episode identity, its padding rule and the
-rotation representation, and M4 reversed which of EPIC's two frame numberings we store and split
-its IMU into two streams; all are reconciled in `docs/technical_design.md`.
+rotation representation, M4 reversed which of EPIC's two frame numberings we store and split
+its IMU into two streams, and M5 replaced two guessed QC thresholds with measured ones and added
+`stream_specs_json` to the catalog; all are reconciled in `docs/technical_design.md`.
 
 Only what a milestone needs gets built; do not scaffold ahead of the plan.
 
@@ -144,6 +163,7 @@ uv sync                                  # install
 uv run rdp run --source pusht            # ingest; --source is required, there is no all-sources mode
 uv run rdp export --budget 50000 --strategy sequential --out exports/subset.jsonl
 uv run rdp report
+uv run rdp stats --out reports/qc_stats.md   # metric distributions behind every qc.yaml threshold
 
 uv run pytest                            # all tests
 uv run pytest tests/acceptance -q        # the two acceptance scenarios
@@ -161,8 +181,8 @@ Bug fixes and features are **regression-first**: write the failing test, watch i
 
 | Layer         | Count | Dependencies                                         | Budget |
 | ------------- | ----- | ---------------------------------------------------- | ------ |
-| `unit`        | 94    | none — domain only, all fakes                        | < 2 s  |
-| `integration` | 52    | real SQLite in tmpdir, real parquet, mini fixtures   | < 20 s |
+| `unit`        | 152   | none — domain only, all fakes                        | < 2 s  |
+| `integration` | 53    | real SQLite in tmpdir, real parquet, mini fixtures   | < 20 s |
 | `acceptance`  | 26    | in-process crash matrix + real subprocess `os._exit` | < 60 s |
 
 - Crash resume is tested through the `FaultInjector` port (a **production port created for

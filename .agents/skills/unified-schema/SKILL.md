@@ -117,7 +117,7 @@ raw.<upstream field>  # unmodeled per-frame upstream data
   round trip is lossless. A zero pose is a _place_ — the world origin — and is indistinguishable
   from a measurement to every consumer downstream.
 
-## The 17 domain invariants
+## The 19 domain invariants
 
 These live in the value objects' validating constructors, **not** scattered through the pipeline.
 Each has a unit test written before the implementation. Violations raise a domain exception at
@@ -140,6 +140,13 @@ construction time.
 15. Derived quantities carry their parameters: `frame_index_source` must look like `derived_from_seconds@<fps>`; a bare `derived` is illegal.
 16. Channels sharing a `group` must agree on `space` / `frame` / `unit` / `origin`. Group-level constraints (e.g. all four `quat_wxyz` components present and normalizable) are validated once on the group.
 17. `clock == "own_timeline"` ⟹ those channels must not appear in `frames.parquet`, and the stream file must have a monotonic `t`. `clock == "frame"` ⟹ column row count is exactly `n_frames`.
+18. `EpisodeMeta.segment` non-null ⟹ `capabilities.is_segment`. One-directional on purpose: it constrains what we recorded, never what upstream owes us.
+19. `EpisodeMeta.termination_column` non-null ⟹ `capabilities.has_termination_signal` **and** the column is registered in `raw_frame_columns`. A rule is never handed the name of a column the artifact does not contain (ADR 015).
+
+**Every field of `EpisodeMeta` must be persisted in the catalog**, because a `ruleset_version`
+bump rebuilds the episode from the DB row (REDO_QC) while a `schema_version` bump re-runs the
+adapter (REDO_NORMALIZE). `stream_specs` was unpersisted for a whole milestone and only the
+first REDO_QC exposed it, failing 40 of 60 D episodes. Test the **round trip**, not the write.
 
 ## Robotics semantics you must not get wrong
 
@@ -249,7 +256,7 @@ fields via an ADR once evidence accumulates. `SignalSpec.level` is exactly that 
 ## References
 
 - [docs/technical_design.md](../../../docs/technical_design.md) §2 — the full schema with every field and its justification
-- [docs/technical_design.md](../../../docs/technical_design.md) §8.4 — the 17 invariants
+- [docs/technical_design.md](../../../docs/technical_design.md) §8.4 — the 19 invariants
 - [docs/technical_design.md](../../../docs/technical_design.md) §8.7 — schema evolution process
 - [docs/technical_design.md](../../../docs/technical_design.md) Appendix A — real data shapes that forced each field
 - `source-adapters` skill — per-source shapes and the anti-corruption-layer protocol

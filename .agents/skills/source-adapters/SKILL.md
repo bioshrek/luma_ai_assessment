@@ -391,5 +391,5 @@ SfM has **mathematically no scale** — this is not "we could not find the unit"
 - [docs/technical_design.md](../../../docs/technical_design.md) Appendix A — full data shapes and the four-source comparison table
 - [docs/technical_design.md](../../../docs/technical_design.md) §1.1 — source D's layered design in full
 - [docs/technical_design.md](../../../docs/technical_design.md) §2.3 — the adapter contract; §5 — identity, hashing, staleness
-- `unified-schema` skill — field semantics and the 17 invariants
+- `unified-schema` skill — field semantics and the 19 invariants
 - `architecture` skill — where adapters sit and what they may not import
