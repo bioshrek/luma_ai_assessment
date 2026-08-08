@@ -79,11 +79,21 @@ full vector, so they cannot misuse it (invariant 6).
 
 ### `clock` — one episode can have several time axes
 
-`clock ∈ {frame, own_timeline}`. `frames.parquet` holds **only** frame-clock signals. D's IMU
-(~200 Hz) goes to `normalized/<...>/streams/imu.parquet` with its own `t` column and its own
-`SignalSpec` under `stream_specs`. Forcing it into the frame table would mean either resampling
-at ingestion (forbidden) or row-count explosion. Frame-aligned views are produced **at export
-time**, with the method recorded.
+`clock ∈ {frame, own_timeline}`. `frames.parquet` holds **only** frame-clock signals. Everything
+else goes to `normalized/<...>/streams/<stream_id>.parquet` with its own `t` column and its own
+`SignalSpec` under `stream_specs` (invariant 17: a stream spec must declare `own_timeline`).
+Forcing it into the frame table would mean either resampling at ingestion (forbidden) or
+row-count explosion. Frame-aligned views are produced **at export time**, with the method
+recorded.
+
+D has three clocks, not two: the frame clock (camera pose), and `gyro` and `accel` — ~195–198 Hz,
+per video, and **not the same clock as each other** (793 of `P28_101`'s 141,924 samples disagree,
+by up to 15 ms). What defines a stream is one clock, not one device
+([ADR 012](../../../docs/adr/012-epic-imu-is-two-streams.md)).
+
+Because stream file names vary per episode, writing an episode must **delete stream files it does
+not declare**. `normalized/` is derived data: a write leaves it equal to the episode, never merged
+with the episode's own past.
 
 ## The `frames.parquet` column-name contract
 
@@ -102,6 +112,10 @@ raw.<upstream field>  # unmodeled per-frame upstream data
 - Stream files follow the same rule: `t` + `<channel.name>`.
 - `level == "episode_label"` ⟹ the corresponding columns **must not exist**. Not a column of
   NULLs — no column (invariant 3).
+- **NaN is written as a genuine parquet NULL** (`pa.array(values, mask=isnan)`). Since nothing in
+  this pipeline zero-fills, a missing float always means "upstream did not provide this", and the
+  round trip is lossless. A zero pose is a _place_ — the world origin — and is indistinguishable
+  from a measurement to every consumer downstream.
 
 ## The 17 domain invariants
 

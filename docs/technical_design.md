@@ -26,12 +26,12 @@ Everything else follows the priority order given in the brief: unified represent
 
 Requirements: ≥3 sources, ≥2 storage formats, including one non-standard / non-single-arm source. We select 4 (the fourth is the evidence for graceful degradation, and is small in volume):
 
-| #   | Source                                                             | Format                                                      | Embodiment                        | Action dim / semantics                                                                                                                      | Rate                                                                         | Cameras | Real/sim |
-| --- | ------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------- | -------- |
-| A   | `lerobot/pusht`                                                    | Parquet + MP4                                               | 2D block pushing (not an arm)     | 2-D, end-effector xy position target                                                                                                        | 10 Hz                                                                        | 1       | sim      |
-| B   | `lerobot/aloha_sim_insertion_human`                                | Parquet + MP4                                               | ALOHA bimanual                    | 14-D, bimanual joint positions + grippers                                                                                                   | 50 Hz                                                                        | 1–4     | sim      |
-| C   | OXE `berkeley_autolab_ur5` 0.1.0 (read from the public GCS bucket) | RLDS TFRecord (episode→steps nesting)                       | UR5 single arm                    | 7-D physical (end-effector delta pose + gripper) + 1-D `terminate_episode` control flag                                                     | 5–10 Hz (no timestamps)                                                      | 3       | real     |
-| D   | **EPIC-KITCHENS-100 (official release, taken by layer)**           | CSV/pickle annotations + JSON camera poses + IMU + long MP4 | Human hands / head-mounted camera | **Symbolic level**: (verb, noun) + time interval, an episode-level label; no per-frame continuous action. State has IMU(6) + camera pose(7) | events ~0.1–1 Hz; IMU **195 Hz measured**; video 29.97/47.95/50/59.94/90 fps | 1       | human    |
+| #   | Source                                                             | Format                                                      | Embodiment                        | Action dim / semantics                                                                                                                                                          | Rate                                                                                        | Cameras | Real/sim |
+| --- | ------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------- | -------- |
+| A   | `lerobot/pusht`                                                    | Parquet + MP4                                               | 2D block pushing (not an arm)     | 2-D, end-effector xy position target                                                                                                                                            | 10 Hz                                                                                       | 1       | sim      |
+| B   | `lerobot/aloha_sim_insertion_human`                                | Parquet + MP4                                               | ALOHA bimanual                    | 14-D, bimanual joint positions + grippers                                                                                                                                       | 50 Hz                                                                                       | 1–4     | sim      |
+| C   | OXE `berkeley_autolab_ur5` 0.1.0 (read from the public GCS bucket) | RLDS TFRecord (episode→steps nesting)                       | UR5 single arm                    | 7-D physical (end-effector delta pose + gripper) + 1-D `terminate_episode` control flag                                                                                         | 5–10 Hz (no timestamps)                                                                     | 3       | real     |
+| D   | **EPIC-KITCHENS-100 (official release, taken by layer)**           | CSV/pickle annotations + JSON camera poses + IMU + long MP4 | Human hands / head-mounted camera | **Symbolic level**: (verb, noun) + time interval, an episode-level label; no per-frame continuous action. State has gyro(3) + accel(3), each on its own clock, + camera pose(7) | events ~0.1–1 Hz; IMU **195–198 Hz measured, per video**; video 29.97/47.95/50/59.94/90 fps | 1       | human    |
 
 > **M0 status:** all four sources confirmed reachable, no substitution — see [ADR 000](adr/000-source-selection.md). Every cell in this table that M0 measured differently from the original draft has been corrected in place; the corrections are recorded in ADRs 001–004.
 
@@ -104,7 +104,9 @@ A single annotation record (equivalent view of the official CSV):
 
 `cam_q` has `rotation = {"repr": "quat_wxyz", "compose": None}` (absolute rotations have no composition-order ambiguity) and `frame = "world"`.
 
-**The IMU units above are now measured, not copied** ([ADR 004](adr/004-epic-frame-fps-and-imu-units.md)). On `P01_101` (362,865 samples): mean |accel| = **9.8998**, which is $g$ to within 0.9% — so accel is `m/s^2`, not $g$; and gyro has p50 = 0.083, p99 = 1.85, max = 4.74, which is `rad/s` (in `deg/s`, real head motion would reach the hundreds). The sample step is a constant 5.128205 ms — **195 Hz**, not the ~200 Hz previously assumed. The IMU clock and the video clock are therefore genuinely different; the IMU must not be resampled into the frame table, and is stored as an independent signal stream in `streams/imu.parquet` (see §2.2h).
+**The IMU units above are now measured, not copied** ([ADR 004](adr/004-epic-frame-fps-and-imu-units.md)). On `P01_101` (362,865 samples): mean |accel| = **9.8998**, which is $g$ to within 0.9% — so accel is `m/s^2`, not $g$; and gyro has p50 = 0.083, p99 = 1.85, max = 4.74, which is `rad/s` (in `deg/s`, real head motion would reach the hundreds).
+
+**The sample rate is a property of the video, not of the corpus, and the two sensors do not share a clock** ([ADR 012](adr/012-epic-imu-is-two-streams.md)). ADR 004's constant 5.128205 ms step (**195 Hz**) holds on `P01_101` and nowhere else: `P01_103` and `P28_101` step at ~5.05 ms (~198 Hz). No nominal rate is declared anywhere in config — the stream carries the timestamps upstream shipped. Worse for the earlier design, gyro and accl are **two files with two `Milliseconds` columns that genuinely disagree**: on `P28_101`, 793 of 141,924 samples differ, by up to 15 ms, contiguously from ~409 s to ~673 s. They are therefore stored as **two independent streams**, `streams/gyro.parquet` and `streams/accel.parquet` (see §2.2h), each on its own timeline. Joining them by row index would have rotated every acceleration onto the wrong instant, silently.
 
 This group stacks, for the first time, holes that earlier sources exposed only individually: C forced only `Channel.rotation`, and A forced only `metric_convertible=False` (and only for 2D pixels). D provides **a full 6-DoF pose that is simultaneously non-convertible** — an SfM reconstruction has no absolute scale, which is not "we could not find the unit" but "mathematically there is no scale". Hard-coding `unit="m"` would make downstream consumers treat reconstruction coordinates as meters.
 
@@ -116,7 +118,9 @@ This group stacks, for the first time, holes that earlier sources exposed only i
 
 **5. Capabilities are uneven within the source — D's most distinctive property, and the hardest to substitute.** IMU covers only the EK-100 extension (the older EK-55 videos lack it); EPIC-Fields covers 671/700 videos, and **per-frame** coverage may still have gaps. So under a single `source_id`, different episodes have **different** `Capabilities`.
 
-M0 confirmed both halves empirically: `P01_101` serves its gyro and accl CSVs, while `P01_01` returns **404** for both — `has_imu` is `True` and `False` for two videos of the same participant. And within `P28_101`'s pose layer, 35,823 of 35,885 frames are registered (**99.83%**) with inter-index gaps up to **22 frames**, so per-frame coverage gaps are real too. Both videos are pinned in `config/sources.yaml` so the property is reproducible, not incidental.
+M0 confirmed both halves empirically: `P01_101` serves its gyro and accl CSVs, while `P01_01` returns **404** for both — `has_imu` is `True` and `False` for two videos of the same participant. And within `P28_101`'s pose layer, 35,823 of 35,885 frames are registered (**99.83%**) with inter-index gaps up to **22 frames**, so per-frame coverage gaps are real too.
+
+**M4 corrected the video selection: `P01_101` is not in `EPIC_100_train.csv`** (the split jumps from `P01_102` to `P01_109`), so it can never produce an episode. The three videos pinned in `config/sources.yaml` are now `P01_01` (no IMU — 404 — and no pose), `P01_103` (IMU only) and `P28_101` (both), which gives three distinct capability shapes under one `source_id`. On real data the run produces `(has_camera_pose, has_imu)` counts of `(false, false)`, `(false, true)` and `(true, true)` — measured, not hypothetical.
 
 A/B/C are internally uniform and can never surface this. The schema in §4 already places `capabilities_json` on the `episodes` table (per episode) — **D is the only source that can prove this design is not decorative**. Hence an added acceptance assertion: two episodes under the same `source_id` have different `capabilities_json`, and their QC conclusions differ accordingly (one `PASS`, one `SKIPPED` on the corresponding rule).
 
@@ -127,9 +131,8 @@ A/B/C are internally uniform and can never surface this. The schema in §4 alrea
   "is_original": true,
   "upstream_revision": "epic-kitchens-100-annotations@<sha>",
   "timestamp_source": "annotation_seconds",
-  "frame_index_source": "derived_from_seconds@<extraction_fps>",
-  "signal_origin": {"gyro": "measured", "accel": "measured",
-                    "cam_t": "estimated", "cam_q": "estimated",
+  "frame_index_source": "derived_from_seconds@<official_fps>",
+  "signal_origin": {"state": "estimated", "gyro": "measured", "accel": "measured",
                     "task": "annotated"},
   "mirrors": [{"kind": "local_transcode", "fps": 30, "resolution": [512, 288],
                "note": "re-encoded for a prior project; frame indices differ from official"}]
@@ -138,11 +141,11 @@ A/B/C are internally uniform and can never surface this. The schema in §4 alrea
 
 Iron rule: **seconds are authoritative, frame indices are derived**. M0 measured just how sharp this is ([ADR 004](adr/004-epic-frame-fps-and-imu-units.md)). Official fps takes **five** distinct values across the 700 videos (59.94×423, 50×268, 29.97×4, 47.95×4, 90×1), not the two assumed here. Worse, the annotation CSV's own `start_frame`/`stop_frame` are **not** at the official fps: tested against all 67,217 train segments, `floor(seconds × official_fps)` reproduces only **58.1%** of them, while "50 fps videos at 50, everything else at a flat **60**" reproduces **100.00%**. So the frame indices are at an _extraction_ rate that differs from the video's real rate for 42% of the corpus. EPIC-Fields pose indices, by contrast, _are_ 1-based at the official fps (verified on `P28_101`: 35,889 max index vs 35,885 expected frames, ratio 1.0001).
 
-Hence `frame_index_source` must carry the **extraction** fps, not the official fps — `derived_from_seconds@50` or `derived_from_seconds@60`, resolved per video from `EPIC_100_video_info.csv` via `epic100.frame_extraction_fps` in `config/sources.yaml`. Storing only frame indices means the whole corpus silently breaks when the copy changes; a bare `derived` is illegal. Costs: (a) with `--with-video` on the local mirror, pixel-level conclusions hold only for that mirror and cannot be extrapolated to official video; (b) 288p is insufficient for fine-grained hand/contact judgments, so no visual labels are produced this round.
+Hence there are **two** frame numberings, and M4 reversed this paragraph's earlier conclusion about which one to store ([ADR 010](adr/010-epic-two-frame-numberings.md)). `frames.parquet` is numbered on the **official** fps — `frame_index_source = "derived_from_seconds@59.9401"` — because that is the only clock the **pose layer can be joined on**; numbering on the extraction fps would require resampling to attach a pose, i.e. fabricated data, for precisely the episodes where the pose is the only state we have. The CSV's own numbering is not discarded: it is preserved verbatim as `raw_extra.epic.extraction_numbering` (`start_frame`, `stop_frame`, the fps they were counted at, and a note that they are not comparable with `raw.frame_index`), resolved per video from `EPIC_100_video_info.csv` via `epic100.frame_extraction_fps` in `config/sources.yaml`. Storing only frame indices means the whole corpus silently breaks when the copy changes; a bare `derived` is illegal. Costs: (a) with `--with-video` on the local mirror, pixel-level conclusions hold only for that mirror and cannot be extrapolated to official video; (b) 288p is insufficient for fine-grained hand/contact judgments, so no visual labels are produced this round.
 
 **7. Boundaries and goals: instructions exist, adjudication does not.** `EpisodeBoundary.termination_source = "annotator"`, `end_reason = "annotation_bound"`, `success = None`. But **D's `None` and C's `None` mean different things**: C means "an adjudication mechanism exists, but this episode's outcome is unknown", D means "no adjudicator exists in this system at all". `EpisodeBoundary` therefore gains `success_adjudicator: "simulator" | "policy" | "operator" | "none"` (see §2.2g) — otherwise downstream cannot distinguish "label missing, can be filled in" from "label cannot exist".
 
-**8. Sample selection and scale.** Pick 5–8 videos spread across participants, including **at least one with IMU and one without** (deliberately creating uneven capabilities), taking the first N segments of each video, capped by `max_episodes` in `config/sources.yaml`. Total volume is in the thousands to ten thousand frames — D's value is **demonstrating representation-level degradation, mixed provenance, and uneven in-source capabilities**, not adding bulk.
+**8. Sample selection and scale.** Pick 5–8 videos spread across participants, including **at least one with IMU and one without** (deliberately creating uneven capabilities), taking the first N segments of each video, capped by `max_episodes` in `config/sources.yaml`. Listing is **round-robin across the videos, not video-major**: with video-major ordering a `--max-episodes 20` run would return twenty episodes of one video, and the uneven capabilities that are this source's entire contribution would never appear (ADR 011). Total volume is in the thousands to ten thousand frames — D's value is **demonstrating representation-level degradation, mixed provenance, and uneven in-source capabilities**, not adding bulk.
 
 **9. Availability, licensing, and privacy.** The official annotations and EPIC-Fields are publicly downloadable under **CC BY-NC 4.0 (non-commercial)**, which must be recorded in the README and in the `license` field of the `sources` table. Which layers to take is declared by `layers: [annotations, camera_pose, imu]` in `config/sources.yaml`. The local mirror's absolute path appears only in `config/sources.local.yaml` (gitignored); the repository contains a `${EPIC_KITCHENS_MIRROR}` placeholder. **If any layer is unavailable, only that layer degrades — the whole source must not fail.** Layer availability rides on the same capability-declaration mechanism as episode-level capabilities; this is "degrade, don't error" applied at the data-source level.
 
@@ -369,14 +372,16 @@ Typical values: A = `env_rule / success` (coverage > 0.95 judged by the simulato
 
 **h. Multiple clocks: `frames.parquet` carries only the frame clock; other signal streams carry their own time axis.**
 
-The schema contained one never-stated assumption: **one row = one frame, and all signals share a single clock**. A/B/C all happen to be single-clock sources, so like `level` it was never tested; D breaks it outright — IMU at **195 Hz** (measured), camera pose at video rate (50–60 fps), event annotations at ~0.3 Hz, all within one episode. Forcing the IMU into the frame table leaves only two options: resampling (violating §2.2c's "no resampling at ingestion") or row-count explosion. Neither is acceptable. Therefore:
+The schema contained one never-stated assumption: **one row = one frame, and all signals share a single clock**. A/B/C all happen to be single-clock sources, so like `level` it was never tested; D breaks it outright — IMU at **195–198 Hz, per video** (measured), camera pose at video rate (50–60 fps), event annotations at ~0.3 Hz, all within one episode. Forcing the IMU into the frame table leaves only two options: resampling (violating §2.2c's "no resampling at ingestion") or row-count explosion. Neither is acceptable. Therefore:
 
 - `frames.parquet` stores only signals aligned to the **frame clock** (D's camera pose aligns naturally once frame indices are derived at official fps);
 - non-frame-clock signals go to `normalized/.../streams/<stream_id>.parquet` with their own `t` column (seconds from 0 within the episode), each stream carrying its own `SignalSpec` (stored in `episode.json`'s `stream_specs`);
 - `SignalSpec` gains `clock: "frame" | "own_timeline"`, with the hard constraint in §8.4 invariant 17;
 - frame-aligned views are produced **at export time** (nearest neighbor / window aggregation, with the method chosen by role), following the same principle as §2.2c: the ingestion layer preserves fidelity, and lossy operations are deferred to export and recorded with their parameters.
 
-D's state therefore splits in two: camera pose (`clock="frame"`, 7-D, in the frame table) and IMU (`clock="own_timeline"`, 6-D, in `streams/imu.parquet`); `Capabilities.has_imu` is unchanged in meaning. The example in Appendix A.D reflects this.
+D's state therefore splits in **three**: camera pose (`clock="frame"`, 7-D, in the frame table), and the gyroscope and accelerometer (`clock="own_timeline"`, 3-D each, in `streams/gyro.parquet` and `streams/accel.parquet`). The IMU is two streams rather than one six-column one because upstream ships two files whose time columns measurably disagree — [ADR 012](adr/012-epic-imu-is-two-streams.md); what makes a table is one clock, not one device. `Capabilities.has_imu` is unchanged in meaning and still covers both. The example in Appendix A.D reflects this.
+
+Because stream file names are episode-dependent, a `normalized/` write must **delete stream files the episode no longer declares** — that directory is derived data and has to end up equal to the episode, not merged with its own history (ADR 012 §3).
 
 ### 2.3 Unified reading
 
@@ -400,14 +405,19 @@ class SourceAdapter(Protocol):
 
 ```
 store/
-  raw/<source_id>/<upstream_id>/…          # staging, disposable
+  raw/<source_id>/<upstream_id>/…          # staging, disposable; .staged.json records adapter_version
   normalized/<source_id>/<upstream_id>/
       frames.parquet                        # per-frame low-dim signals (frame clock, see 2.2h)
-      streams/<stream_id>.parquet           # non-frame-clock signal streams (e.g. D's IMU), with own t column
+      streams/<stream_id>.parquet           # non-frame-clock streams (D's gyro, accel), with own t column
       episode.json                          # metadata + specs + capabilities + schema_version
   catalog.sqlite                            # catalog + state machine + QC results + run reports
   exports/subset_<ts>.jsonl
 ```
+
+The `.staged.json` completion marker carries the `adapter_version` that wrote the directory. Raw
+bytes are immutable, but the **layout** of a staging directory is the adapter's own format, so a
+version bump re-stages. Without this an episode staged by a buggy adapter version is unrepairable
+for the life of the store — both M4 defects in ADR 012 and ADR 013 had exactly that shape.
 
 The path key is `upstream_id`, not `episode_uid`: the uid embeds a `:` separator, which is not
 portable as a filename. The `<source_id>/` prefix supplies the rest of the identity, and
@@ -459,7 +469,7 @@ Each rule is implemented as a `QCRule` declaring `rule_id / severity(FAIL|REVIEW
 | `GRIPPER_STUCK`           | Gripper channel never changes (near-impossible in pick-and-place demos) | gripper channel has 1 unique value and episode frames > 50                                                                                                                                                                                                                                            | REVIEW                                    | has_action & has_gripper                                                             |
 | `TERMINATION_CONSISTENCY` | End signal inconsistent with the declared adjudicator                   | `policy_flag` sources: the flag must be 0 throughout and exactly 1 on the final frame; `env_rule` sources: `done` may appear only on the final frame. A mid-episode end signal means episodes were concatenated incorrectly; no signal on the final frame means it was truncated without being marked | FAIL / REVIEW                             | has_termination_signal                                                               |
 | `SEGMENT_BOUNDS` (D only) | Annotation interval out of bounds / overlapping / too short             | `end > video_duration`, `start >= end`, duration < 0.4 s (<12 frames), or > 50% overlap with an adjacent segment                                                                                                                                                                                      | FAIL / REVIEW                             | annotation-type source                                                               |
-| `POSE_COVERAGE` (D only)  | SfM pose coverage too low / long gaps                                   | non-NULL `cam_t` in < 80% of frames within the segment, or a continuous unregistered run > 0.5 s                                                                                                                                                                                                      | REVIEW                                    | has_camera_pose                                                                      |
+| `POSE_COVERAGE` (D only)  | SfM pose coverage too low / long gaps                                   | the **full pose** (translation and rotation) non-NULL in < 80% of frames within the segment, or a continuous unregistered run > 0.5 s                                                                                                                                                                 | REVIEW                                    | has_camera_pose                                                                      |
 
 Design notes:
 
@@ -514,6 +524,10 @@ episode_state(episode_uid PK, stage, attempt, last_error, lease_owner, lease_exp
 qc_results(id PK, episode_uid, rule_id, verdict, metrics_json, reason, run_id,
            ruleset_version,   -- joint digest of rule code + qc.yaml thresholds
            UNIQUE(episode_uid, rule_id, run_id))
+  -- Keyed by run, so this table is *history*: a ruleset change leaves a trail of what was
+  -- concluded when. Any query that means "what does the catalog think now" must therefore take
+  -- the newest row per (episode_uid, rule_id). Summing every row instead reports one episode
+  -- several times, which is what `rdp report` did until ADR 013.
 
 runs(run_id PK, started_at, finished_at, status, args_json, stats_json,
      resumed_from)         -- non-null exactly when this run picked up an interrupted one
@@ -989,7 +1003,8 @@ Every "change" above is an adapter swap rather than a rewrite — not by coincid
 - **D's official video is not downloaded by default** (hundreds of GB); with `--with-video` over the local mirror, that mirror is a **re-encoded** 512×288 / 30fps version differing from the official original (1080p @ 50/59.94fps), so visual conclusions do not extrapolate and frame indices must be recomputed at the mirror's fps.
 - **D's license is CC BY-NC 4.0 (non-commercial)**, unlike A/B/C; if an exported subset includes D, the whole subset is bound by that constraint. Both the `sources.license` field and the export lines must carry this information.
 - **`terminated` vs `truncated` is unrecoverable for A and B** (measured in M0; [ADR 002](adr/002-lerobot-v3-layout-and-lost-termination.md)). LeRobot's v3.0 export keeps only `next.done` (plus `next.success`/`next.reward` for pusht, and nothing at all beyond `next.done` for aloha), so `EpisodeBoundary.is_truncated` is `None` for both. **Consumers doing value bootstrapping must not assume $V(s_T)=0$ on A/B episodes.** Circumstantially, all 50 aloha episodes are exactly 500 frames, which indicates a fixed step limit — i.e. they are probably all truncated — but "probably" is recorded in `raw_extra`, not promoted into the field. Only source C carries the distinction honestly.
-- **D's annotation frame indices are at an extraction fps that differs from the video's official fps** for 42% of the corpus (measured in M0; [ADR 004](adr/004-epic-frame-fps-and-imu-units.md)). We store seconds as authoritative and re-derive indices, but any join against a third-party EPIC artifact that assumed official fps will be off by up to a frame per 10 s of video.
+- **D's annotation frame indices are at an extraction fps that differs from the video's official fps** for 42% of the corpus (measured in M0; [ADR 004](adr/004-epic-frame-fps-and-imu-units.md)). Seconds are authoritative; `raw.frame_index` is re-derived at the **official** fps so the pose layer can be joined without resampling ([ADR 010](adr/010-epic-two-frame-numberings.md)). The consequence is that any join against a third-party EPIC artifact keyed on the released JPEG dumps — which are numbered at the extraction fps — must go through `raw_extra.epic.extraction_numbering`, not through `raw.frame_index`; the two drift by up to a frame per 10 s of video.
+- **D's gyroscope and accelerometer are stored as two streams on two clocks** ([ADR 012](adr/012-epic-imu-is-two-streams.md)). Any consumer wanting a single 6-D IMU vector must resample one onto the other and own that decision; on `P28_101` the two clocks differ by up to 15 ms, so the choice is not free.
 - **C has no timestamps at all**, so its `timestamp_source` is `synthesized@5Hz`; any velocity or jerk computed on C is in units of "per step", not per second, and the QC thresholds for C are set accordingly.
 - D's action is at the `episode_label` level and cannot be used directly for behavior cloning; it is excluded from the default training-subset quota this round. Its value lies in validating three paths: **representation-level degradation, mixed signal provenance, and uneven in-source capabilities**.
 - **The `terminated` / `truncated` distinction may already be lost upstream**: LeRobot's export of A/B has only `next.done`. If M0 confirms that "goal achieved" cannot be distinguished from "cut off by a step limit", then `EpisodeBoundary.is_truncated` can only be `unknown` for A/B, and that subset is unsuitable for direct use in offline RL.
@@ -1031,6 +1046,8 @@ Paths are **not** hardcodable; `info.json` publishes them as format strings:
 
 Episode 0 in `meta/episodes`: `dataset_from_index=0`, `dataset_to_index=161`, `length=161`,
 `videos/observation.image/from_timestamp=0.0`, `to_timestamp=16.1`. So **an episode is a row range into a shared parquet plus a time range into a shared mp4** ([ADR 002](adr/002-lerobot-v3-layout-and-lost-termination.md)).
+
+**That row range is dataset-global, not file-relative** ([ADR 013](adr/013-lerobot-global-index-and-qc-history.md)). `pusht` has a single data file, so the distinction is invisible on it; `aloha_sim_insertion` spreads 50 episodes over two files, and treating `dataset_from_index` as an offset into the shard selected **zero rows** for all 35 episodes in `file-001`. The adapter therefore selects rows by filtering the parquet's own dataset-global `index` column, and refuses the episode if the number of rows it got is not the number the metadata promised.
 
 Key fragment of `meta/info.json` (**verbatim from the M0 probe**):
 
@@ -1236,13 +1253,13 @@ Structure and decisions are in §1.1. Among the four sources it carries three th
 
 ```json
 {
-  "episode_uid": "epic100:P01_101_0",
+  "episode_uid": "epic100:P28_101_0",
   "schema_version": 1,
   "embodiment": "human_ego",
-  "task": "open door",
-  "time_range_s": [0.14, 3.37],
-  "frame_range": [7, 168],
-  "n_frames": 162,
+  "task": "open cupboard",
+  "time_range_s": [2.39, 3.46],
+  "frame_range": [119, 173],
+  "n_frames": 55,
   "fps_nominal": 50.0,
   "fps_effective": 50.0,
   "action_spec": {
@@ -1285,12 +1302,12 @@ Structure and decisions are in §1.1. Among the four sources it carries three th
     ]
   },
   "stream_specs": {
-    "imu": {
+    "gyro": {
       "level": "per_frame_continuous",
       "clock": "own_timeline",
-      "space": "mixed",
-      "dim": 6,
-      "physical_dim": 6,
+      "space": "imu_angular_velocity",
+      "dim": 3,
+      "physical_dim": 3,
       "channels": [
         {
           "name": "gyro.x",
@@ -1302,7 +1319,16 @@ Structure and decisions are in §1.1. Among the four sources it carries three th
           "metric_convertible": true,
           "frame": "sensor",
           "is_physical": true
-        },
+        }
+      ]
+    },
+    "accel": {
+      "level": "per_frame_continuous",
+      "clock": "own_timeline",
+      "space": "imu_linear_acceleration",
+      "dim": 3,
+      "physical_dim": 3,
+      "channels": [
         {
           "name": "accel.x",
           "group": "accel",
@@ -1330,16 +1356,30 @@ Structure and decisions are in §1.1. Among the four sources it carries three th
   },
   "provenance": {
     "is_original": true,
-    "upstream_revision": "epic-kitchens-100-annotations@<sha>",
-    "adapter_version": "epic_adapter@<git-sha>",
+    "upstream_revision": "master",
+    "adapter_version": "epic@1.1.0",
     "timestamp_source": "annotation_seconds",
     "frame_index_source": "derived_from_seconds@50",
     "signal_origin": {
+      "state": "estimated",
       "gyro": "measured",
       "accel": "measured",
-      "cam_t": "estimated",
-      "cam_q": "estimated",
       "task": "annotated"
+    }
+  },
+  "raw_extra": {
+    "epic": {
+      "verb": "open",
+      "noun": "cupboard",
+      "narration": "open cupboard",
+      "official_fps": 50.0,
+      "layers": { "annotations": true, "camera_pose": true, "imu": true },
+      "extraction_numbering": {
+        "start_frame": "119",
+        "stop_frame": "173",
+        "fps": 50.0,
+        "note": "annotation-CSV frame indices, at the extraction fps, not the official fps; not comparable with raw.frame_index"
+      }
     }
   },
   "boundary": {
@@ -1352,30 +1392,32 @@ Structure and decisions are in §1.1. Among the four sources it carries three th
 }
 ```
 
-Contrast this with **another episode in the same source** — `P01_01`, an EK-55-era video whose IMU files return HTTP 404: `has_imu=false`, and where SfM registration failed, `has_camera_pose=false` with `state_spec.level="absent"`. Both videos are pinned in `config/sources.yaml`, so this is measured, not hypothetical. Two episodes, same source, same adapter, yet different `capabilities_json` — precisely the target of the acceptance assertion in §1.1 point 5.
+This is a real episode, copied from `store/normalized/epic100/P28_101_0/episode.json`. Two details worth reading twice: `signal_origin` is keyed by **spec** (`state`, `gyro`, `accel`, `task`), not by channel group — it is the episode-level summary of `Channel.origin`; and `P28_101` is a 50 fps video, so its two frame numberings happen to coincide, which is exactly why `extraction_numbering` is stored for every episode rather than only for the ones where it visibly differs.
+
+Contrast this with **another episode in the same source** — `P01_01`, an EK-55-era video whose IMU files return HTTP 404 and which EPIC-Fields never published a reconstruction for: `has_imu=false`, `has_camera_pose=false`, `state_spec.level="absent"`, and no `stream_specs` at all. `P01_103` sits between them: IMU but no pose. All three videos are pinned in `config/sources.yaml`, so this is measured, not hypothetical — a real run yields `(has_camera_pose, has_imu)` of `(false,false)`, `(false,true)` and `(true,true)` under one `source_id`. Three episodes, same source, same adapter, different `capabilities_json` — precisely the target of the acceptance assertion in §1.1 point 5.
 
 ### Four-source comparison (this table is the argument for "why they cannot be squashed into one vector")
 
-| Dimension                   | A pusht                          | B aloha                     | C ur5 (RLDS)                                                  | D epic100                                                         |
-| --------------------------- | -------------------------------- | --------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Storage                     | Parquet + MP4                    | Parquet + MP4               | Nested TFRecord                                               | CSV annotations + JSON poses + IMU + MP4                          |
-| Embodiment                  | Planar pusher                    | Dual-arm 6+1 ×2             | Single UR5 arm                                                | Human hands / head-mounted camera                                 |
-| action level                | Per-frame continuous             | Per-frame continuous        | Per-frame continuous                                          | **Episode-level symbolic label**                                  |
-| action space                | Task-space absolute xy           | Joint-space absolute angles | End-effector delta pose                                       | (verb, noun) + time interval                                      |
-| action dim                  | 2                                | 14                          | **8** (7 physical + 1 control flag)                           | 0 (no per-frame columns)                                          |
-| state dim                   | 2                                | 14                          | 15 (semantics unclear)                                        | Pose 7 (frame clock) + IMU 6 (own clock, §2.2h)                   |
-| Units                       | **Pixels**                       | rad + normalized opening    | m + rad                                                       | rad/s + m/s² (**both measured**) + **scale-free pose**            |
-| Signal provenance           | Measured                         | Measured                    | Measured                                                      | **Mixed: measured / SfM-estimated / human-annotated**             |
-| Delta?                      | No                               | No                          | **Pose yes / gripper also yes (a −1/0/+1 change command)**    | No                                                                |
-| Timestamps                  | Real                             | Real                        | **None (must be synthesized)**                                | Annotation seconds → derived frame index                          |
-| Frame rate                  | 10 Hz                            | 50 Hz                       | ~5 Hz                                                         | Events ~0.3 Hz; IMU **195 Hz**; video **5 distinct official fps** |
-| Cameras                     | 1 (96×96)                        | 1 (640×480, sim)            | **3** (static + **wrist** + depth), **inline frames, no mp4** | 1 (head, not fetched by default)                                  |
-| Real / sim                  | Sim                              | Sim                         | Real robot                                                    | Real human                                                        |
-| Language instruction        | Yes (single task)                | Yes (single task)           | Yes (per step)                                                | verb+noun composed + original narration                           |
-| Gripper                     | None                             | Continuous opening ×2       | **Ternary change command −1/0/+1**                            | None                                                              |
-| Termination decided by      | Environment rule (coverage>0.95) | Operator stops recording    | **Policy output `terminate_episode`**                         | Annotator drawing the interval afterwards                         |
-| Success adjudicator         | Simulator                        | Operator                    | Policy                                                        | **None (not unknown — nonexistent)**                              |
-| `terminated` vs `truncated` | **Lost upstream (§11)**          | **Lost upstream (§11)**     | **Preserved** (`is_last & ~is_terminal`)                      | N/A (interval, not a rollout)                                     |
-| Within-source consistency   | Uniform                          | Uniform                     | Uniform                                                       | **Capabilities differ per episode**                               |
+| Dimension                   | A pusht                          | B aloha                     | C ur5 (RLDS)                                                  | D epic100                                                                        |
+| --------------------------- | -------------------------------- | --------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Storage                     | Parquet + MP4                    | Parquet + MP4               | Nested TFRecord                                               | CSV annotations + JSON poses + IMU + MP4                                         |
+| Embodiment                  | Planar pusher                    | Dual-arm 6+1 ×2             | Single UR5 arm                                                | Human hands / head-mounted camera                                                |
+| action level                | Per-frame continuous             | Per-frame continuous        | Per-frame continuous                                          | **Episode-level symbolic label**                                                 |
+| action space                | Task-space absolute xy           | Joint-space absolute angles | End-effector delta pose                                       | (verb, noun) + time interval                                                     |
+| action dim                  | 2                                | 14                          | **8** (7 physical + 1 control flag)                           | 0 (no per-frame columns)                                                         |
+| state dim                   | 2                                | 14                          | 15 (semantics unclear)                                        | Pose 7 (frame clock) + gyro 3 + accel 3 (**two own clocks**, §2.2h)              |
+| Units                       | **Pixels**                       | rad + normalized opening    | m + rad                                                       | rad/s + m/s² (**both measured**) + **scale-free pose**                           |
+| Signal provenance           | Measured                         | Measured                    | Measured                                                      | **Mixed: measured / SfM-estimated / human-annotated**                            |
+| Delta?                      | No                               | No                          | **Pose yes / gripper also yes (a −1/0/+1 change command)**    | No                                                                               |
+| Timestamps                  | Real                             | Real                        | **None (must be synthesized)**                                | Annotation seconds → derived frame index                                         |
+| Frame rate                  | 10 Hz                            | 50 Hz                       | ~5 Hz                                                         | Events ~0.3 Hz; IMU **195–198 Hz, per video**; video **5 distinct official fps** |
+| Cameras                     | 1 (96×96)                        | 1 (640×480, sim)            | **3** (static + **wrist** + depth), **inline frames, no mp4** | 1 (head, not fetched by default)                                                 |
+| Real / sim                  | Sim                              | Sim                         | Real robot                                                    | Real human                                                                       |
+| Language instruction        | Yes (single task)                | Yes (single task)           | Yes (per step)                                                | verb+noun composed + original narration                                          |
+| Gripper                     | None                             | Continuous opening ×2       | **Ternary change command −1/0/+1**                            | None                                                                             |
+| Termination decided by      | Environment rule (coverage>0.95) | Operator stops recording    | **Policy output `terminate_episode`**                         | Annotator drawing the interval afterwards                                        |
+| Success adjudicator         | Simulator                        | Operator                    | Policy                                                        | **None (not unknown — nonexistent)**                                             |
+| `terminated` vs `truncated` | **Lost upstream (§11)**          | **Lost upstream (§11)**     | **Preserved** (`is_last & ~is_terminal`)                      | N/A (interval, not a rollout)                                                    |
+| Within-source consistency   | Uniform                          | Uniform                     | Uniform                                                       | **Capabilities differ per episode**                                              |
 
 **Conclusion**: the only thing that can genuinely be unified is the **structure** (how episodes/frames are organized, channel-level metadata, capability declarations, provenance) — **not the numbers**. That is the entire basis for the schema in §2. And the last three rows only appeared once D was added: **representation level, signal trustworthiness, and within-source consistency are invisible when looking only at A/B/C** — because those three dimensions are constant across the three robot datasets, which makes it easy to mistake them for "not worth modeling".

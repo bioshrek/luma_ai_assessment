@@ -26,7 +26,7 @@ Adapters live in `infrastructure/`. They are the **only** place that knows an up
 Adding a source = one class + one entry in `config/sources.yaml` + characterization tests.
 `domain/` and `application/` change **zero lines**.
 
-Planned implementations: `LeRobotAdapter` (shared by A and B, driven by `meta/info.json`),
+Implementations: `LeRobotAdapter` (shared by A and B, driven by `meta/info.json`),
 `RLDSAdapter` (C), `EpicKitchensAdapter` (D), and `HDF5Adapter` held in reserve (robomimic/ALOHA)
 in case C's TFDS environment proves unworkable.
 
@@ -47,8 +47,15 @@ in case C's TFDS environment proves unworkable.
 7. **Characterization tests with golden fixtures**, not strict TDD — adapters depend on real
    formats that must be explored first. Fixtures are a few dozen frames per source, committed,
    < 1 MB total. A wrong channel mapping is the most insidious bug in this project.
+   **A fixture must be a scale model of the data's _structure_, not of its _size_.** Every defect
+   the M4 shakedown found (ADR 012, ADR 013) got through because a fixture reproduced the bytes
+   but flattened a shape: one data file instead of two, one IMU window instead of a diverging one.
 8. **Adapter behavior changes bump `adapter_version`**, which feeds the staleness predicate and
-   triggers a targeted re-normalization.
+   triggers a targeted re-normalization — **and re-staging**. `raw/.../.staged.json` records the
+   `adapter_version` that wrote the directory (`infrastructure/sources/staging.py`), because the
+   staging _layout_ is the adapter's format even though the bytes inside it are upstream's.
+   Without that check, an episode staged by a buggy version is unrepairable for the life of the
+   store.
 
 ## The ACL protocol: upstream fact the schema cannot express
 
@@ -106,6 +113,12 @@ One row: `action = [222.0, 97.0]` (pusher target xy, **pixels**, range ~[0, 512]
 - Termination is decided by the **environment** (`coverage > 0.95`):
   `termination_source="env_rule"`, `success_adjudicator="simulator"`. LeRobot exported only
   `next.done`, so `is_truncated=None` — a known, recorded limitation, not a guess.
+- **`dataset_from_index` / `dataset_to_index` are dataset-GLOBAL row ids, never offsets into the
+  shard you just opened.** `pusht` has one data file so the two coincide there; `aloha` spans
+  two, and slicing by position selected **0 rows** for all 35 episodes in `file-001`. Select with
+  `table.filter(index >= start & index < stop)` on the parquet's own `index` column, and assert
+  the row count equals `stop - start`
+  ([ADR 013](../../../docs/adr/013-lerobot-global-index-and-qc-history.md)).
 - `next.success` is absent from some exports; when it is, `success=None` **and**
   `success_adjudicator="none"`, never `success=False`.
 
@@ -316,20 +329,36 @@ Declared as `layers: [annotations, camera_pose, imu]` in `config/sources.yaml`.
 SfM has **mathematically no scale** — this is not "we could not find the unit". Hard-coding
 `unit="m"` would make consumers treat reconstruction coordinates as meters.
 
-- **Measure the IMU unit convention empirically in M0** (`rad/s` vs `deg/s`). Do not copy the
-  documentation.
-- **Two clocks.** IMU ~200 Hz vs video 50/59.94 fps. IMU goes to
-  `normalized/<...>/streams/imu.parquet` with its own `t`. Never resample into the frame table.
+- **The IMU unit convention was measured, not read** (ADR 004): accel is `m/s^2` (mean |accel| =
+  9.8998 on `P01_101`), gyro is `rad/s`.
+- **Three clocks, and two of them are the IMU.** Gyro and accel are shipped as two files
+  (`-gyro.csv`, `-accl.csv` — upstream spells it `accl`) with two `Milliseconds` columns that
+  **measurably disagree**: 793 of `P28_101`'s 141,924 samples, by up to 15 ms. They therefore go
+  to `streams/gyro.parquet` and `streams/accel.parquet`, each on its own timeline (ADR 012).
+  Never resample either into the frame table, and never join them to each other by row index.
+- **The IMU rate is per-video and is not declared anywhere**: 5.128205 ms on `P01_101`, ~5.05 ms
+  on `P01_103` and `P28_101`. There is no `imu_hz` key in config — the stream carries the
+  timestamps upstream shipped.
+- **Two frame numberings** (ADR 010). The annotation CSV's `start_frame`/`stop_frame` are counted
+  at the JPEG **extraction** fps (50 for 50 fps videos, a flat 60 otherwise); EPIC-Fields pose
+  keys are 1-based at the **official** fps. `frames.parquet` uses the **official** one, because
+  it is the only clock the pose layer joins on; the CSV's is preserved verbatim under
+  `raw_extra.epic.extraction_numbering` with a note that the two are not comparable.
 - **Unregistered pose frames are NULL** — not zero, not interpolated. EPIC-Fields registered
   ~18.7M of ~20M frames.
 - **QC severity downgrade applies here.** A COLMAP pose jump is reconstruction failure, not data
   corruption; `origin != "measured"` ⟹ FAIL becomes REVIEW with the basis stated. On A/B/C this
   rule is an identity transform — **only D verifies it works.**
 - **Capabilities differ per episode within the source.** IMU covers only EK-100 extension videos;
-  EPIC-Fields covers 671/700 with possible per-frame gaps. Sample selection must deliberately
-  include **at least one video with IMU and one without**. The acceptance assertion: two episodes
-  under one `source_id` with different `capabilities_json` and correspondingly different QC
-  outcomes (one `PASS`, one `SKIPPED`).
+  EPIC-Fields covers 671/700 with possible per-frame gaps. The three pinned videos give three
+  profiles: `P01_01` neither (its IMU files 404), `P01_103` IMU only, `P28_101` both. Layer
+  availability is probed **once, in `fetch`**, and persisted into `ref.json` — never re-probed in
+  `normalize`, or a resumed run's result would depend on the network.
+- **List round-robin across videos**, not video-major: with video-major ordering a
+  `--max-episodes 20` run returns twenty episodes of one video and the heterogeneity above never
+  appears.
+- **`P01_101` is not in `EPIC_100_train.csv`.** The split jumps `P01_102`…`P01_109`. It appears in
+  M0's ADR 004 measurements (which read the IMU files directly) but can never produce an episode.
 - **Seconds are authoritative; frame indices are derived.**
   `timestamp_source="annotation_seconds"`, `frame_index_source="derived_from_seconds@<official_fps>"`.
   Official videos are 50 or 59.94 fps; the mirror is 30 fps — the same segment has different frame

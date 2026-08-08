@@ -21,18 +21,27 @@ fixed-width vector is wrong and is explicitly rejected by the design.
 
 ## Current State
 
-**M0–M3 are complete. M4 is next: depth — source D (EPIC-KITCHENS-100).**
+**M0–M4 are complete. M5 is next: the full QC ruleset with data-driven thresholds.**
 
-`rdp run && rdp export && rdp report` works end to end on real data for **three** sources —
-`pusht`, `aloha_sim_insertion` and `berkeley_ur5`. **Both acceptance scenarios are green and
-machine-checked**: a crash at any of the eight checkpoints resumes to a byte-identical result,
-and a re-run on unchanged upstream writes nothing at all. `scripts/demo_crash_resume.sh`
-reproduces the reviewer's scenario with a real `kill -9`.
+`rdp run && rdp export && rdp report` works end to end on real data for **all four** sources —
+`pusht`, `aloha_sim_insertion`, `berkeley_ur5` and `epic100`: **202 episodes committed, 0
+failed**. **Both acceptance scenarios are green and machine-checked**: a crash at any of the
+eight checkpoints resumes to a byte-identical result, and a re-run on unchanged upstream writes
+nothing at all. `scripts/demo_crash_resume.sh` reproduces the reviewer's scenario with a real
+`kill -9`.
 
 M3 proved the adapter seam. Adding **B cost no Python at all** (one `sources.yaml` entry, one
 `embodiments.yaml` entry, one fixture, sharing `LeRobotAdapter` with A); adding **C** cost one
 adapter, a 130-line stdlib TFRecord reader and one streaming method on the fetcher — with
 `application/` untouched and exactly one line added to `domain/`.
+
+M4 was the one that pushed back on the schema. D forced `stream_specs` / `streams` (invariant 17:
+a signal whose clock is not the frame clock gets its own `streams/<id>.parquet`), `Channel.origin`
+with a QC severity downgrade (invariant 13), and per-**episode** capabilities. It also produced
+the milestone's most useful lesson: after every gate was green on fixtures, the first unlimited
+run against real servers found **four** defects, one of them two milestones old and costing 35 of
+50 aloha episodes. See ADR 012 and ADR 013 — the theme is that a fixture must be a scale model of
+the data's _structure_, not of its _size_.
 
 ```
 docs/technical_design.md      # the design authority — domain model, schema, QC, layering
@@ -43,6 +52,9 @@ docs/adr/005..006             # M1's: pusht's synthesized clock, catalog schema 
 docs/adr/007                  # M2's: resume, leases, and the honest crash criteria
 docs/adr/008..009             # M3's: B's channel-level units + unverifiable gripper direction;
                               #   C's re-shard-proof identity, required clock, padding trimming
+docs/adr/010..013             # M4's: EPIC's two frame numberings; layered availability and
+                              #   signal origins; gyro/accel are two clocks (supersedes 011 §3);
+                              #   LeRobot's global row index + qc_results is history, not state
 docs/assessment.md            # original requirements (Chinese)
 docs/assessment_for_ai.md     # requirements, agent-facing
 docs/ai_chat_sessions/*.json  # raw AI transcripts — archival, do not edit or translate
@@ -50,15 +62,16 @@ pyproject.toml                # uv project; `spike` dependency group is M0-only 
 config/{sources,embodiments,qc}.yaml   # sources, per-embodiment channel semantics, ruleset
 spikes/probe_*.py             # throwaway probes; _out/*.txt is their captured output
 src/rdp/{domain,application,infrastructure,interfaces}/
-tests/{unit,integration,acceptance,fakes,fixtures}/     # 133 tests, ~20 s; domain coverage 97%
-scripts/make_fixtures.py      # regenerates the three mini fixtures (~256 KB total)
+tests/{unit,integration,acceptance,fakes,fixtures}/     # 172 tests, ~25 s; domain coverage 97.7%
+scripts/make_fixtures.py      # regenerates the four mini fixtures (~505 KB total)
 scripts/demo_crash_resume.sh  # real kill -9 against a throwaway store under .demo/
 ```
 
-**Read `docs/adr/000`–`009` before touching an adapter or the resume logic.** M0 measured four
+**Read `docs/adr/000`–`013` before touching an adapter or the resume logic.** M0 measured four
 things the design had guessed wrong, M1 a fifth, M2 corrected one exit criterion that was
-physically unachievable as written, and M3 corrected C's episode identity, its padding rule and
-the rotation representation; all are reconciled in `docs/technical_design.md`.
+physically unachievable as written, M3 corrected C's episode identity, its padding rule and the
+rotation representation, and M4 reversed which of EPIC's two frame numberings we store and split
+its IMU into two streams; all are reconciled in `docs/technical_design.md`.
 
 Only what a milestone needs gets built; do not scaffold ahead of the plan.
 
@@ -128,10 +141,9 @@ For layer placement, bounded contexts, and the port catalogue, load the `archite
 
 ```bash
 uv sync                                  # install
-uv run rdp run --source pusht            # ingest
-uv run rdp export --budget 50000 --strategy balanced --out exports/subset.jsonl
+uv run rdp run --source pusht            # ingest; --source is required, there is no all-sources mode
+uv run rdp export --budget 50000 --strategy sequential --out exports/subset.jsonl
 uv run rdp report
-uv run rdp doctor                        # environment / config sanity check
 
 uv run pytest                            # all tests
 uv run pytest tests/acceptance -q        # the two acceptance scenarios
@@ -140,15 +152,18 @@ uv run ruff check . && uv run mypy src/rdp && uv run lint-imports
 bash scripts/demo_crash_resume.sh        # real kill -9, reproduces the reviewer's scenario
 ```
 
+`sequential` is the only export strategy so far; `balanced` is M6's, and `rdp doctor` is not
+implemented. Do not cite either as if it existed.
+
 ## Test Strategy
 
 Bug fixes and features are **regression-first**: write the failing test, watch it fail, then fix.
 
 | Layer         | Count | Dependencies                                         | Budget |
 | ------------- | ----- | ---------------------------------------------------- | ------ |
-| `unit`        | ~85   | none — domain only, all fakes                        | < 2 s  |
-| `integration` | ~5    | real SQLite in tmpdir, real parquet, mini fixtures   | < 20 s |
-| `acceptance`  | ~24   | in-process crash matrix + real subprocess `os._exit` | < 60 s |
+| `unit`        | 94    | none — domain only, all fakes                        | < 2 s  |
+| `integration` | 52    | real SQLite in tmpdir, real parquet, mini fixtures   | < 20 s |
+| `acceptance`  | 26    | in-process crash matrix + real subprocess `os._exit` | < 60 s |
 
 - Crash resume is tested through the `FaultInjector` port (a **production port created for
   testability**; the production implementation is a no-op). `pytest.mark.parametrize` covers all

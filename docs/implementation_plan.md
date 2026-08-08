@@ -376,7 +376,8 @@ signal origin, and per-episode capability heterogeneity — plus the multi-clock
 - `ActionSpec.level = "episode_label"` with `physical_dim = 0` and **no** action columns in
   `frames.parquet`.
 - Camera pose (`clock="frame"`) into `frames.parquet` with NULL — never 0 — on unregistered
-  frames; IMU (`clock="own_timeline"`) into `streams/imu.parquet` with its own `t` column.
+  frames; the IMU (`clock="own_timeline"`) into `streams/gyro.parquet` and
+  `streams/accel.parquet`, each with its own `t` column.
 - `Channel.origin` / `Provenance.signal_origin`, and the domain-level severity downgrade for
   non-`measured` channels (invariant 13).
 - `success_adjudicator = "none"`; local mirror registered under `provenance.mirrors` with its own
@@ -395,17 +396,80 @@ pytest tests/integration/test_epic_adapter.py -q
 
 **Exit criteria**
 
-- [ ] Two episodes under the same `source_id` have **different** `capabilities_json`, and their
+- [x] Two episodes under the same `source_id` have **different** `capabilities_json`, and their
       QC conclusions differ accordingly (one `PASS`, one `SKIPPED` on the corresponding rule).
-- [ ] Frame-level action rules report `SKIPPED(reason=action_level_is_episode_label)` — a reason
+      Three profiles across three videos, and `P28_101_0` PASSes `POSE_COVERAGE` while its
+      sibling `P28_101_43` (32 of 48 frames registered) is `REVIEW`.
+- [x] Frame-level action rules report `SKIPPED(reason=action_level_is_episode_label)` — a reason
       distinct from "no action", and separately countable in the report.
-- [ ] A jump in an `estimated` camera-pose channel produces `REVIEW`, not `FAIL`, and the
-      `Verdict.reason` states the downgrade basis.
-- [ ] Unregistered pose frames are NULL in parquet (assert no zero-fill).
-- [ ] `provenance.frame_index_source` matches `derived_from_seconds@<fps>`; a bare `derived`
+- [~] A jump in an `estimated` camera-pose channel produces `REVIEW`, not `FAIL`, and the
+  `Verdict.reason` states the downgrade basis. **The mechanism is in `evaluate_rule` and is
+  unit-tested against a stub FAIL rule; no rule shipped in M4 is FAIL-severity over pose, so
+  the production jerk rule that exercises it end to end lands in M5**
+  ([ADR 011](adr/011-epic-layered-availability-and-origins.md), decision 5).
+- [x] Unregistered pose frames are NULL in parquet (asserted: `null_count == 16` on
+      `P28_101_43`, and no zero appears among the missing frames).
+- [x] `provenance.frame_index_source` matches `derived_from_seconds@<fps>`; a bare `derived`
       raises a domain error.
-- [ ] IMU rows live only in `streams/imu.parquet`; no IMU column exists in `frames.parquet`.
-- [ ] License `CC BY-NC 4.0` is recorded on the source row and propagates to export lines.
+- [x] IMU rows live only in `streams/gyro.parquet` and `streams/accel.parquet`; no IMU column
+      exists in `frames.parquet`.
+- [x] License `CC BY-NC 4.0` is recorded on the source row and propagates to export lines.
+
+**Outcome**
+
+`rdp run` completes on real upstream data for all four sources — 80 pusht, 50 aloha, 12 ur5, 60
+epic100 = **202 episodes committed, 0 failed** — and a second run of each re-ingests nothing.
+172 tests, domain coverage 97.7%, all gates green.
+
+Adding D cost **one adapter**, two QC rules, and two domain additions — `stream_specs` /
+`streams` (invariant 17) and `downgrade_basis` (invariant 13). `application/` changed only where
+a new port method was needed (`FrameStore.read_streams`, `SourceRepository.licenses`).
+
+**Discovered during M4** (recorded in ADRs [010](adr/010-epic-two-frame-numberings.md),
+[011](adr/011-epic-layered-availability-and-origins.md),
+[012](adr/012-epic-imu-is-two-streams.md) and
+[013](adr/013-lerobot-global-index-and-qc-history.md)):
+
+1. EPIC has **two** frame numberings for the same segment, and they drift: the annotation CSV
+   counts at the extraction fps, EPIC-Fields indexes poses at the official fps. `P01_01_0` is
+   frames 8–202 in the CSV and 8–201 on the official clock. We store the official-fps numbering
+   and preserve the CSV's under `raw_extra.epic.extraction_numbering` (ADR 010).
+2. The IMU rate is **not** a constant: 5.128205 ms on `P01_101`, ~5.05 ms on `P01_103` and
+   `P28_101`. The `imu_hz: 195` key was removed from config rather than left as a
+   wrong-but-unused nominal (ADR 011, decision 3) — a correction to ADR 004, which measured only
+   one video.
+3. `P01_101` is **not in the train split** at all, so the first video selection could never have
+   produced episodes for it. Replaced by `P01_103`.
+4. `P01_01` has no GoPro metadata (404, verified by probe) and no published reconstruction;
+   `P01_103` has IMU only; `P28_101` has both. Three capability profiles from three videos.
+5. Layer availability had to be measured at `fetch` and **persisted**, not re-probed at
+   `normalize`, or a resumed run's result would depend on the network and on when it resumed.
+6. `POSE_COVERAGE` needs two independent metrics: coverage, and the longest continuous hole in
+   **seconds**. Evenly scattered gaps and one contiguous gap of the same size mean different
+   things to a consumer.
+7. NaN is now written as a genuine parquet **NULL**. The pipeline never zero-fills, so a NaN in
+   a float column always means "upstream did not provide this", and the round trip is lossless.
+
+**Found only by running without `--max-episodes`, after every gate was already green** — four
+defects, none of which a fixture could have shown, and all four the same mistake: a fixture that
+is a scale model of the _data_ instead of a scale model of its _structure_.
+
+8. **Gyro and accel do not share a clock.** On `P28_101`, 793 of 141,924 `Milliseconds` values
+   disagree, by up to 15 ms, contiguously across ~409–673 s. ADR 011's "join if identical, else
+   raise" was wrong in both branches; they are now two streams (ADR 012). `P01_103`'s two files
+   are bit-identical, which is why one video was not enough to see it.
+9. **A staging directory belongs to the adapter version that wrote it.** Splitting the IMU made
+   every already-staged EPIC episode fail permanently, because `.staged.json` said "done".
+   Markers now carry `adapter_version`, shared by all three adapters (ADR 012 §2).
+10. **A `normalized/` write must remove stream files the episode no longer declares**, or a
+    re-normalization leaves `streams/imu.parquet` beside the new pair and the next read raises
+    (ADR 012 §3).
+11. **LeRobot's `dataset_from_index` is dataset-global, not file-relative** — a two-milestone-old
+    bug that lost **35 of 50 aloha episodes** the moment a source spanned two data files.
+    `pusht` has one file, so nothing had ever exercised it (ADR 013 §1).
+12. **`qc_results` is history and the report was reading it as state**: 202 committed episodes
+    were reported as 325 `TS_MONOTONIC` verdicts. Unscoped queries now take the newest row per
+    (episode, rule) (ADR 013 §2).
 
 ---
 
