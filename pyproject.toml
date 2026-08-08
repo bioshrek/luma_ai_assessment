@@ -1,0 +1,57 @@
+[project]
+name = "rdp"
+version = "0.0.0"
+description = "Robot Demonstration Pipeline: multi-source ingestion, QC, and curated export"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=2.0",
+    "pyarrow>=17.0",
+    "pydantic>=2.8",
+    "pyyaml>=6.0",
+    "rich>=13.7",
+    "typer>=0.12",
+]
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.0",
+    "mypy>=1.11",
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "types-pyyaml>=6.0",
+]
+# M0 feasibility spike only. Heavyweight and throwaway; never a runtime dependency.
+spike = [
+    "huggingface-hub>=0.24",
+    "pandas>=2.2",
+    "requests>=2.32",
+    "tensorflow>=2.16,<2.20",
+    "tensorflow-datasets>=4.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rdp"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/rdp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
