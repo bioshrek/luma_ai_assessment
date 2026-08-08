@@ -144,7 +144,9 @@ def test_report_summarises_the_last_run(ingested: Container) -> None:
     report = ingested.report()()
     assert report.run is not None
     assert report.stage_counts == {"COMMITTED": 3}
-    assert report.rule_counts["TS_MONOTONIC"]["SKIPPED"] == 3
+    assert report.cumulative is not None
+    assert report.cumulative.verdicts["TS_MONOTONIC"]["SKIPPED"] == 3
+    assert report.run_verdicts["TS_MONOTONIC"]["SKIPPED"] == 3
 
 
 def test_the_report_counts_each_episode_once_after_a_re_qc(ingested: Container) -> None:
@@ -162,7 +164,8 @@ def test_the_report_counts_each_episode_once_after_a_re_qc(ingested: Container) 
         uow.commit()
 
     report = ingested.report()()
-    assert report.rule_counts["TS_MONOTONIC"] == {
+    assert report.cumulative is not None
+    assert report.cumulative.verdicts["TS_MONOTONIC"] == {
         Verdict.PASS.value: 1,
         Verdict.SKIPPED.value: 2,
     }
