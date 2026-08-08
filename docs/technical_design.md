@@ -26,12 +26,14 @@ Everything else follows the priority order given in the brief: unified represent
 
 Requirements: ≥3 sources, ≥2 storage formats, including one non-standard / non-single-arm source. We select 4 (the fourth is the evidence for graceful degradation, and is small in volume):
 
-| #   | Source                                                                                                                       | Format                                                      | Embodiment                        | Action dim / semantics                                                                                                                      | Rate                                              | Cameras | Real/sim |
-| --- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------- | -------- |
-| A   | `lerobot/pusht`                                                                                                              | Parquet + MP4                                               | 2D block pushing (not an arm)     | 2-D, end-effector xy position target                                                                                                        | 10 Hz                                             | 1       | sim      |
-| B   | `lerobot/aloha_sim_insertion_human`                                                                                          | Parquet + MP4                                               | ALOHA bimanual                    | 14-D, bimanual joint positions + grippers                                                                                                   | 50 Hz                                             | 1–4     | sim      |
-| C   | OXE slice (a small sub-dataset of `jxu124/OpenX-Embodiment`; first choice `berkeley_autolab_ur5`, fallback a `bridge` slice) | RLDS/TFDS (episode→steps nesting)                           | UR5 single arm                    | 7-D physical (end-effector delta pose + gripper) + 3-D `terminate_episode` control flags                                                    | 5–10 Hz (no timestamps)                           | 2–3     | real     |
-| D   | **EPIC-KITCHENS-100 (official release, taken by layer)**                                                                     | CSV/pickle annotations + JSON camera poses + IMU + long MP4 | Human hands / head-mounted camera | **Symbolic level**: (verb, noun) + time interval, an episode-level label; no per-frame continuous action. State has IMU(6) + camera pose(7) | events ~0.1–1 Hz; IMU ~200 Hz; video 50/59.94 fps | 1       | human    |
+| #   | Source                                                             | Format                                                      | Embodiment                        | Action dim / semantics                                                                                                                      | Rate                                                                         | Cameras | Real/sim |
+| --- | ------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------- | -------- |
+| A   | `lerobot/pusht`                                                    | Parquet + MP4                                               | 2D block pushing (not an arm)     | 2-D, end-effector xy position target                                                                                                        | 10 Hz                                                                        | 1       | sim      |
+| B   | `lerobot/aloha_sim_insertion_human`                                | Parquet + MP4                                               | ALOHA bimanual                    | 14-D, bimanual joint positions + grippers                                                                                                   | 50 Hz                                                                        | 1–4     | sim      |
+| C   | OXE `berkeley_autolab_ur5` 0.1.0 (read from the public GCS bucket) | RLDS TFRecord (episode→steps nesting)                       | UR5 single arm                    | 7-D physical (end-effector delta pose + gripper) + 1-D `terminate_episode` control flag                                                     | 5–10 Hz (no timestamps)                                                      | 3       | real     |
+| D   | **EPIC-KITCHENS-100 (official release, taken by layer)**           | CSV/pickle annotations + JSON camera poses + IMU + long MP4 | Human hands / head-mounted camera | **Symbolic level**: (verb, noun) + time interval, an episode-level label; no per-frame continuous action. State has IMU(6) + camera pose(7) | events ~0.1–1 Hz; IMU **195 Hz measured**; video 29.97/47.95/50/59.94/90 fps | 1       | human    |
+
+> **M0 status:** all four sources confirmed reachable, no substitution — see [ADR 000](adr/000-source-selection.md). Every cell in this table that M0 measured differently from the original draft has been corrected in place; the corrections are recorded in ADRs 001–004.
 
 Selection rationale (to be written into the documentation):
 
@@ -40,7 +42,7 @@ Selection rationale (to be written into the documentation):
 - **D is the only source where the action exists but lives at a different level of representation**: its action is a symbolic label ((verb, noun) + time interval), not a per-frame vector. A/B/C all have "per-frame fixed-width numeric vector" actions, so that implicit assumption in the schema would never be tested. D forces the orthogonal `SignalSpec.level` dimension (see §2.2a).
 - **D is also the only source with mixed signal provenance and uneven capabilities within the source**: IMU is measured, camera pose is SfM-estimated, and action labels are human-annotated — three levels of trustworthiness inside a single episode. Moreover IMU covers only some videos, and pose covers only 671/700 videos. These two facts force `Provenance.signal_origin` (§2.2f) and the acceptance assertion that capabilities must be declared **per episode, not per source** (§1.1, point 5).
 
-Scale control: 30–80 episodes per source, targeting 80k–120k frames total, capped by `max_episodes` in `config/sources.yaml`.
+Scale control: 50–80 episodes per source, capped by `max_episodes` in `config/sources.yaml`. M0 measured the real episode lengths (A 124.5 frames avg, B exactly 500, C ~71 steps, D ~160), giving **≈50k frames total**. The earlier 80k–120k target is withdrawn: B has only 50 episodes upstream, so reaching 100k would mean padding the corpus with more of the trivial 2-D source A rather than adding representational diversity. Frame count is not a goal; cross-source heterogeneity is, and it is fully covered at 50k. See [ADR 000](adr/000-source-selection.md).
 
 **Trade-off (must be stated explicitly in the documentation)**: `--no-video` is the default. For A and B we pull only the low-dimensional signals plus video **metadata** (HTTP Range read of the mp4 header / `ffprobe` for frame count and resolution — no full download). The cost: any QC that inspects pixel content (black frames, exposure anomalies, camera misalignment) degrades to **structural checks only** (frame-count consistency, missing camera streams, resolution consistency). A `--with-video` switch is provided; on a small sample (e.g. 5 episodes per source) it downloads full video and runs the complete pixel-level QC, proving the capability exists. D's official video is on the order of hundreds of GB and is likewise not fetched by default; with `--with-video`, a local mirror is preferred (see §1.1, point 6), but frame indices must be recomputed at the mirror's fps.
 
@@ -62,7 +64,7 @@ Scale control: 30–80 episodes per source, targeting 80k–120k frames total, c
 | **IMU** (bundled with Extended Sequences) | Gyroscope + accelerometer (built into the head-mounted camera)                                  | moderate, per video | **Take (a few videos only)**                               |
 | VISOR (NeurIPS'22)                        | 271K manual masks + 9.9M densely interpolated masks + 67K hand-object relations                 | large               | Not taken; registered as a known limitation (§11)          |
 | EPIC-SOUNDS                               | 117.5K audio events / 44 classes                                                                | —                   | Not taken                                                  |
-| Video itself                              | 700 long videos, native 1080p @ 50/59.94 fps                                                    | hundreds of GB      | Not taken by default; `--with-video` uses the local mirror |
+| Video itself                              | 700 long videos, native 1080p @ 29.97 / 47.95 / 50 / 59.94 / 90 fps                             | hundreds of GB      | Not taken by default; `--with-video` uses the local mirror |
 
 A single annotation record (equivalent view of the official CSV):
 
@@ -100,7 +102,9 @@ A single annotation record (equivalent view of the official CSV):
 | `cam_t[3]`    | EPIC-Fields  | `head` | `camera_translation_abs`  | `None`  | **False** (SfM scale is arbitrary) | `estimated` |
 | `cam_q[4]`    | EPIC-Fields  | `head` | `camera_rotation_abs`     | `None`  | False                              | `estimated` |
 
-`cam_q` has `rotation = {"repr": "quat_wxyz", "compose": None}` (absolute rotations have no composition-order ambiguity) and `frame = "world"`. The IMU's unit convention (rad/s vs deg/s) **must be confirmed by measurement in M0, never copied from documentation**. Note also that the IMU (~200 Hz) and the video frames (50/59.94 fps) run on **different clocks**; the IMU must not be resampled into the frame table. It is stored as an independent signal stream in `streams/imu.parquet` (see §2.2h).
+`cam_q` has `rotation = {"repr": "quat_wxyz", "compose": None}` (absolute rotations have no composition-order ambiguity) and `frame = "world"`.
+
+**The IMU units above are now measured, not copied** ([ADR 004](adr/004-epic-frame-fps-and-imu-units.md)). On `P01_101` (362,865 samples): mean |accel| = **9.8998**, which is $g$ to within 0.9% — so accel is `m/s^2`, not $g$; and gyro has p50 = 0.083, p99 = 1.85, max = 4.74, which is `rad/s` (in `deg/s`, real head motion would reach the hundreds). The sample step is a constant 5.128205 ms — **195 Hz**, not the ~200 Hz previously assumed. The IMU clock and the video clock are therefore genuinely different; the IMU must not be resampled into the frame table, and is stored as an independent signal stream in `streams/imu.parquet` (see §2.2h).
 
 This group stacks, for the first time, holes that earlier sources exposed only individually: C forced only `Channel.rotation`, and A forced only `metric_convertible=False` (and only for 2D pixels). D provides **a full 6-DoF pose that is simultaneously non-convertible** — an SfM reconstruction has no absolute scale, which is not "we could not find the unit" but "mathematically there is no scale". Hard-coding `unit="m"` would make downstream consumers treat reconstruction coordinates as meters.
 
@@ -112,6 +116,8 @@ This group stacks, for the first time, holes that earlier sources exposed only i
 
 **5. Capabilities are uneven within the source — D's most distinctive property, and the hardest to substitute.** IMU covers only the EK-100 extension (the older EK-55 videos lack it); EPIC-Fields covers 671/700 videos, and **per-frame** coverage may still have gaps. So under a single `source_id`, different episodes have **different** `Capabilities`.
 
+M0 confirmed both halves empirically: `P01_101` serves its gyro and accl CSVs, while `P01_01` returns **404** for both — `has_imu` is `True` and `False` for two videos of the same participant. And within `P28_101`'s pose layer, 35,823 of 35,885 frames are registered (**99.83%**) with inter-index gaps up to **22 frames**, so per-frame coverage gaps are real too. Both videos are pinned in `config/sources.yaml` so the property is reproducible, not incidental.
+
 A/B/C are internally uniform and can never surface this. The schema in §4 already places `capabilities_json` on the `episodes` table (per episode) — **D is the only source that can prove this design is not decorative**. Hence an added acceptance assertion: two episodes under the same `source_id` have different `capabilities_json`, and their QC conclusions differ accordingly (one `PASS`, one `SKIPPED` on the corresponding rule).
 
 **6. The local mirror's new role: a consistency check target, not a data source.**
@@ -121,7 +127,7 @@ A/B/C are internally uniform and can never surface this. The schema in §4 alrea
   "is_original": true,
   "upstream_revision": "epic-kitchens-100-annotations@<sha>",
   "timestamp_source": "annotation_seconds",
-  "frame_index_source": "derived_from_seconds@<official_fps>",
+  "frame_index_source": "derived_from_seconds@<extraction_fps>",
   "signal_origin": {"gyro": "measured", "accel": "measured",
                     "cam_t": "estimated", "cam_q": "estimated",
                     "task": "annotated"},
@@ -130,7 +136,9 @@ A/B/C are internally uniform and can never surface this. The schema in §4 alrea
 }
 ```
 
-Iron rule: **seconds are authoritative, frame indices are derived**. Official videos are partly 50 fps and partly 59.94 fps; the local mirror is 30 fps — the same segment has different frame indices in each. Storing only frame indices means the whole corpus silently breaks when the copy changes. Derived quantities must therefore **carry the parameters they depend on** (`derived_from_seconds@<fps>`), otherwise staleness cannot be determined. Costs: (a) with `--with-video` on the local mirror, pixel-level conclusions hold only for that mirror and cannot be extrapolated to official video; (b) 288p is insufficient for fine-grained hand/contact judgments, so no visual labels are produced this round.
+Iron rule: **seconds are authoritative, frame indices are derived**. M0 measured just how sharp this is ([ADR 004](adr/004-epic-frame-fps-and-imu-units.md)). Official fps takes **five** distinct values across the 700 videos (59.94×423, 50×268, 29.97×4, 47.95×4, 90×1), not the two assumed here. Worse, the annotation CSV's own `start_frame`/`stop_frame` are **not** at the official fps: tested against all 67,217 train segments, `floor(seconds × official_fps)` reproduces only **58.1%** of them, while "50 fps videos at 50, everything else at a flat **60**" reproduces **100.00%**. So the frame indices are at an _extraction_ rate that differs from the video's real rate for 42% of the corpus. EPIC-Fields pose indices, by contrast, _are_ 1-based at the official fps (verified on `P28_101`: 35,889 max index vs 35,885 expected frames, ratio 1.0001).
+
+Hence `frame_index_source` must carry the **extraction** fps, not the official fps — `derived_from_seconds@50` or `derived_from_seconds@60`, resolved per video from `EPIC_100_video_info.csv` via `epic100.frame_extraction_fps` in `config/sources.yaml`. Storing only frame indices means the whole corpus silently breaks when the copy changes; a bare `derived` is illegal. Costs: (a) with `--with-video` on the local mirror, pixel-level conclusions hold only for that mirror and cannot be extrapolated to official video; (b) 288p is insufficient for fine-grained hand/contact judgments, so no visual labels are produced this round.
 
 **7. Boundaries and goals: instructions exist, adjudication does not.** `EpisodeBoundary.termination_source = "annotator"`, `end_reason = "annotation_bound"`, `success = None`. But **D's `None` and C's `None` mean different things**: C means "an adjudication mechanism exists, but this episode's outcome is unknown", D means "no adjudicator exists in this system at all". `EpisodeBoundary` therefore gains `success_adjudicator: "simulator" | "policy" | "operator" | "none"` (see §2.2g) — otherwise downstream cannot distinguish "label missing, can be filled in" from "label cannot exist".
 
@@ -227,8 +235,8 @@ The only thing genuinely unified is **channel-level metadata**: every channel mu
 
 **Four corrections relative to the previous revision, forced by source C** (B pushed `unit` / `gripper` down to the channel level; C shows that was not deep enough):
 
-- **`space` / `is_delta` / `frame` also move from spec level down to channel level.** Three different things live in C's action vector: `world_vector` / `rotation_delta` are delta poses (base frame, m / rad), `gripper_closedness_action` is an **absolute** open/close command (not a delta, no coordinate frame), and `terminate_episode` is a flag. Writing `is_delta=True` at spec level lies directly about the gripper channel, and §2.2a itself requires bucketing cross-source statistics by `is_delta` first — that lie propagates into every statistic and every threshold. B had the same disease (`space="joint_position"` is false for its 2 gripper channels), just not in a load-bearing position. Spec-level fields are retained as a **derived summary** (a cheap gate for `STATE_ACTION_ECHO`); the channel level is the truth.
-- **Added `Channel.rotation` (rotation representation and composition order).** `rotation_delta[3]` with `unit="rad"` is still insufficient to determine the semantics: three numbers could be axis-angle, a rotation vector, Euler XYZ, or Euler ZYX. Not knowing which makes the data impossible to integrate, compare, or convert — effectively unreadable. A has no rotations and B's radians are joint angles (no convention needed), so **only C exposes this hole**. Per this section's "do not guess" principle, `repr="unknown"` is a legal value, but the field must exist.
+- **`space` / `is_delta` / `frame` also move from spec level down to channel level.** Three different things live in C's action vector: `world_vector` / `rotation_delta` are delta poses (base frame, m / rad), `gripper_closedness_action` is a **ternary change command** (`+1` close, `−1` open, `0` no change — measured in M0; see [ADR 003](adr/003-oxe-action-vector-is-8d.md)), and `terminate_episode` is a flag. So `is_delta` is `true` for C's gripper and `false` for B's, **within the same `role`** — no spec-level attribute can express that, and §2.2a itself requires bucketing cross-source statistics by `is_delta` first, so the lie would propagate into every statistic and every threshold. B had the same disease (`space="joint_position"` is false for its 2 gripper channels), just not in a load-bearing position. Spec-level fields are retained as a **derived summary** (a cheap gate for `STATE_ACTION_ECHO`); the channel level is the truth.
+- **Added `Channel.rotation` (rotation representation and composition order).** `rotation_delta[3]` with `unit="rad"` is still insufficient to determine the semantics: three numbers could be axis-angle, a rotation vector, Euler XYZ, or Euler ZYX. Not knowing which makes the data impossible to integrate, compare, or convert — effectively unreadable. A has no rotations and B's radians are joint angles (no convention needed), so **only C exposes this hole**. M0 recovered half the answer from upstream's own field description ("Delta change in roll, pitch, yaw" → `repr="euler_rpy"`) and confirmed the other half is genuinely unstated (`compose="unknown"`). Per this section's "do not guess" principle, `unknown` is a legal value, but the field must exist.
 - **`raw_extra` must be split by granularity** (episode level vs frame level, see the end of §2.2d) — nearly all of C's unmodeled upstream fields are per-step.
 - **`Capabilities.has_video` must split into `has_rgb` / `has_video`, and the missing `CameraSpec` must be added** (see §2.2e) — C's frames are embedded in the records, and it has a wrist camera.
 
@@ -338,7 +346,8 @@ EpisodeBoundary = {
                              # the draft also had "exporter", removed along with export truncation (§6):
                              # no enum value without a producer
   "end_reason": "success" | "truncated" | "operator_stop" | "annotation_bound" | "unknown",
-  "is_truncated": bool,      # cut off by a step limit: the final state is not a terminal state
+  "is_truncated": bool | None,  # cut off by a step limit: the final state is not a terminal state.
+                             # None = the upstream export merged terminated/truncated (A, B) — see §11
   "success": bool | None,    # None means "unknown", not False
   "success_adjudicator": "simulator" | "policy" | "operator" | "none",
                              # who is entitled to judge success; "none" = no adjudicator exists at all
@@ -349,11 +358,13 @@ Typical values: A = `env_rule / success` (coverage > 0.95 judged by the simulato
 
 **`success_adjudicator` is new relative to the previous revision, forced by D**: C's `success=None` and D's `success=None` look identical in the schema but mean the opposite — C means "the adjudication mechanism exists but this episode is unknown" (it can be labeled later), D means "no adjudicator exists in this system" (it cannot). Without this field, downstream would treat D as an under-labeled dataset and try to label it, or include D in the denominator when computing success rates.
 
-**`terminated` and `truncated` must be stored separately — the single easiest thing to get silently wrong**: `is_terminal=True` means the trajectory genuinely terminated and value bootstrapping must be cut off ($V(s_T)=0$); `is_last=True, is_terminal=False` means it was merely cut by a step limit, the final state is an ordinary state, and bootstrapping must continue ($V(s_T) \neq 0$). Collapsing these into one `done` boolean makes every offline RL run trained on that export **silently wrong**. pusht also distinguishes `terminated` / `truncated` at the gym layer, but LeRobot's export may have preserved only `next.done` — the M0 spike must confirm this, and if it is indeed lost, register it as a known limitation (§11).
+**`terminated` and `truncated` must be stored separately — the single easiest thing to get silently wrong**: `is_terminal=True` means the trajectory genuinely terminated and value bootstrapping must be cut off ($V(s_T)=0$); `is_last=True, is_terminal=False` means it was merely cut by a step limit, the final state is an ordinary state, and bootstrapping must continue ($V(s_T) \neq 0$). Collapsing these into one `done` boolean makes every offline RL run trained on that export **silently wrong**.
+
+**M0 answered the open question, and the answer is bad: for A and B the distinction is already destroyed upstream** ([ADR 002](adr/002-lerobot-v3-layout-and-lost-termination.md)). pusht exports `next.done`, `next.success`, `next.reward`; aloha exports `next.done` and _nothing else_. Neither `terminated` nor `truncated` exists in either dataset, so it cannot be recovered — `is_truncated = None` for A and B, and the loss is registered in §11. C is therefore the **only** source that can populate `is_truncated=True` honestly (from `is_last & ~is_terminal`), which is a further argument for keeping it.
 
 **h. Multiple clocks: `frames.parquet` carries only the frame clock; other signal streams carry their own time axis.**
 
-The schema contained one never-stated assumption: **one row = one frame, and all signals share a single clock**. A/B/C all happen to be single-clock sources, so like `level` it was never tested; D breaks it outright — IMU at ~200 Hz, camera pose at video rate (50/59.94 fps), event annotations at ~0.3 Hz, all within one episode. Forcing the IMU into the frame table leaves only two options: resampling (violating §2.2c's "no resampling at ingestion") or row-count explosion. Neither is acceptable. Therefore:
+The schema contained one never-stated assumption: **one row = one frame, and all signals share a single clock**. A/B/C all happen to be single-clock sources, so like `level` it was never tested; D breaks it outright — IMU at **195 Hz** (measured), camera pose at video rate (50–60 fps), event annotations at ~0.3 Hz, all within one episode. Forcing the IMU into the frame table leaves only two options: resampling (violating §2.2c's "no resampling at ingestion") or row-count explosion. Neither is acceptable. Therefore:
 
 - `frames.parquet` stores only signals aligned to the **frame clock** (D's camera pose aligns naturally once frame indices are derived at official fps);
 - non-frame-clock signals go to `normalized/.../streams/<stream_id>.parquet` with their own `t` column (seconds from 0 within the episode), each stream carrying its own `SignalSpec` (stored in `episode.json`'s `stream_specs`);
@@ -446,6 +457,7 @@ Design notes:
 - **`STATE_ACTION_ECHO` is a genuine trap and must be documented**: ALOHA (source B) is a **joint-position-controlled teleoperated demonstration**, so the action _is_ the next target joint angle and `corr(a_t, s_t)` is naturally > 0.999 — judging by correlation would misclassify the entire dataset. The real anomaly signal is **bit-level equality** (a real servo always has tracking error and can never be bit-identical) plus lag-1 mutual information dropping to 0 (the action does not lead the state at all). Plot the distribution of `max abs(a-s)` in a first pass before fixing the threshold. Gating must not guess from equal column widths; it explicitly checks `action_spec.space == state_spec.space and action_spec.dim == state_spec.dim` (precisely why §2.2b' introduced `StateSpec`). C's `state.space == "unknown"` therefore resolves cleanly to `SKIPPED`.
 - **Timestamp rules need `timestamp_source`, not just a capability**: RLDS (source C) steps have **no timestamps at all**; time is synthesized from step index and declared control frequency. Running `TS_MONOTONIC` on synthesized timestamps always passes, which is a meaningless false positive — so the verdict must be `SKIPPED(reason=synthetic_timestamp)`. This is the second canonical example of "degrading ≠ passing".
 - **Non-physical channels must be excluded from numeric rules — the third false-positive trap**: C's `terminate_episode` steps from 0 to 1 on the final frame, a magnitude orders of magnitude beyond that "channel's" usual p99.9. Without filtering by `is_physical`, **every C episode would be marked REVIEW by `ACTION_JERK`**, and its "limits" are $\{0,1\}$ rather than ±0.1 m, so judging it by physical limits in `ACTION_RANGE` is equally meaningless. Thresholds and statistics are therefore bucketed by `role`, never by column index.
+- **`GRIPPER_STUCK` must read `is_delta` before it reads the values — a trap M0 uncovered**: C's gripper channel is a change command where **`0` is the normal resting value** ("no change"), not a closed gripper ([ADR 003](adr/003-oxe-action-vector-is-8d.md)). In the probed episode it is `0.0` for all 71 steps. A `GRIPPER_STUCK` rule written against B's absolute-opening convention would fire on essentially every C episode. The rule is therefore gated on `channel.is_delta == False`, and for delta grippers a different question is asked (does the _cumulative_ command ever change?).
 - **Gating cannot look only at capabilities; it must also look at `level` — the fourth trap (forced by D)**: D has `has_action=True`, but its action is an `episode_label`. Looking only at capabilities would enable `ACTION_RANGE` / `ACTION_JERK` / `GRIPPER_STUCK` on a source with no per-frame numeric columns, ending in a KeyError or an empty array. The correct approach declares `required_level={"action": "per_frame_continuous"}`, yielding `SKIPPED(reason=action_level_is_episode_label)` on D. Note this reason is a **different conclusion** from "no action" and the report must count them separately: the former means "a different rule could check this" (e.g. label validity), the latter means "there is nothing to check".
 - **Channels with `origin != "measured"` have their severity automatically downgraded one level — the fifth trap (also forced by D)**: D's camera poses are COLMAP output, so a jump in them is most likely **reconstruction failure**, not corruption; judging them as `measured` and returning FAIL amounts to using model error to discredit data. The downgrade is **applied uniformly by the domain layer** (§8.4 invariant 13); rule implementations cannot bypass it, and the `reason` must state the basis, or the report will contain a batch of unexplainable REVIEWs. A/B/C states are entirely `measured`, so this rule is an identity transform on them — **only D can verify it works**.
 - **`TERMINATION_CONSISTENCY` catches errors the other nine cannot see**: two episodes wrongly concatenated during normalization (an end signal appears mid-episode), or one episode split in half (no end signal on the final frame). B and D have no explicit end signal, so `has_termination_signal=False` → a clean `SKIPPED`, another instance of the degradation path.
@@ -935,6 +947,9 @@ Every "change" above is an adapter swap rather than a rewrite — not by coincid
 - **D's camera poses are SfM estimates with arbitrary scale** (`metric_convertible=false`), covering only 671/700 videos and possibly with per-frame gaps; any distance/velocity conclusion based on them is a relative quantity.
 - **D's official video is not downloaded by default** (hundreds of GB); with `--with-video` over the local mirror, that mirror is a **re-encoded** 512×288 / 30fps version differing from the official original (1080p @ 50/59.94fps), so visual conclusions do not extrapolate and frame indices must be recomputed at the mirror's fps.
 - **D's license is CC BY-NC 4.0 (non-commercial)**, unlike A/B/C; if an exported subset includes D, the whole subset is bound by that constraint. Both the `sources.license` field and the export lines must carry this information.
+- **`terminated` vs `truncated` is unrecoverable for A and B** (measured in M0; [ADR 002](adr/002-lerobot-v3-layout-and-lost-termination.md)). LeRobot's v3.0 export keeps only `next.done` (plus `next.success`/`next.reward` for pusht, and nothing at all beyond `next.done` for aloha), so `EpisodeBoundary.is_truncated` is `None` for both. **Consumers doing value bootstrapping must not assume $V(s_T)=0$ on A/B episodes.** Circumstantially, all 50 aloha episodes are exactly 500 frames, which indicates a fixed step limit — i.e. they are probably all truncated — but "probably" is recorded in `raw_extra`, not promoted into the field. Only source C carries the distinction honestly.
+- **D's annotation frame indices are at an extraction fps that differs from the video's official fps** for 42% of the corpus (measured in M0; [ADR 004](adr/004-epic-frame-fps-and-imu-units.md)). We store seconds as authoritative and re-derive indices, but any join against a third-party EPIC artifact that assumed official fps will be off by up to a frame per 10 s of video.
+- **C has no timestamps at all**, so its `timestamp_source` is `synthesized@5Hz`; any velocity or jerk computed on C is in units of "per step", not per second, and the QC thresholds for C are set accordingly.
 - D's action is at the `episode_label` level and cannot be used directly for behavior cloning; it is excluded from the default training-subset quota this round. Its value lies in validating three paths: **representation-level degradation, mixed signal provenance, and uneven in-source capabilities**.
 - **The `terminated` / `truncated` distinction may already be lost upstream**: LeRobot's export of A/B has only `next.done`. If M0 confirms that "goal achieved" cannot be distinguished from "cut off by a step limit", then `EpisodeBoundary.is_truncated` can only be `unknown` for A/B, and that subset is unsuitable for direct use in offline RL.
 
@@ -954,65 +969,83 @@ Every "change" above is an adapter swap rather than a rewrite — not by coincid
 
 ## Appendix A. Concrete Data Shapes of the Four Sources (read this before writing the schema)
 
-> The specific values for A/B/C come from each dataset's public documentation and common versions; **the `meta/info.json` / `dataset_info.json` actually read during the M0 spike is authoritative**. This appendix exists to build intuition and drive the schema discussion. D was measured locally.
+> **M0 measured all four.** The values below are what `spikes/probe_*.py` actually read (captured in `spikes/_out/*.txt`), not documentation. Where the measurement contradicted the earlier draft, the correction is marked and carries an ADR reference.
 
 ### A. `lerobot/pusht` — 2D planar block pushing (not an arm; pixel units)
 
+The real v3.0 layout — **the whole repo is 8 files**, and one parquet holds _all_ 206 episodes:
+
 ```
 pusht/
-  meta/info.json          # robot_type, fps, total_episodes/frames, and the dtype/shape/names of features
-  meta/tasks.*            # task_index -> natural-language task
-  meta/episodes*          # each episode's length and start/end index
-  data/chunk-000/episode_000000.parquet
-  videos/chunk-000/observation.image/episode_000000.mp4
+  meta/info.json                        # codebase_version=v3.0, robot_type, fps, totals, features, path templates
+  meta/tasks.parquet                    # task_index -> natural-language task (1 row)
+  meta/episodes/chunk-000/file-000.parquet  # 206 rows: per-episode row range, video time range, length, stats/*
+  data/chunk-000/file-000.parquet       # 25,650 rows = every episode concatenated
+  videos/observation.image/chunk-000/file-000.mp4   # one mp4 for the entire dataset
 ```
 
-Key fragment of `meta/info.json` (shape sketch):
+Paths are **not** hardcodable; `info.json` publishes them as format strings:
+`data_path = "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"`,
+`video_path = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"`.
+
+Episode 0 in `meta/episodes`: `dataset_from_index=0`, `dataset_to_index=161`, `length=161`,
+`videos/observation.image/from_timestamp=0.0`, `to_timestamp=16.1`. So **an episode is a row range into a shared parquet plus a time range into a shared mp4** ([ADR 002](adr/002-lerobot-v3-layout-and-lost-termination.md)).
+
+Key fragment of `meta/info.json` (**verbatim from the M0 probe**):
 
 ```json
 {
-  "robot_type": "pusht",
+  "codebase_version": "v3.0",
+  "robot_type": "unknown",
   "fps": 10,
   "total_episodes": 206,
   "total_frames": 25650,
+  "total_tasks": 1,
+  "chunks_size": 1000,
   "features": {
     "action": {
       "dtype": "float32",
       "shape": [2],
-      "names": ["motor_0", "motor_1"]
+      "names": { "motors": ["motor_0", "motor_1"] }
     },
     "observation.state": {
       "dtype": "float32",
       "shape": [2],
-      "names": ["motor_0", "motor_1"]
+      "names": { "motors": ["motor_0", "motor_1"] }
     },
     "observation.image": { "dtype": "video", "shape": [96, 96, 3] },
     "next.reward": {},
+    "next.done": {},
     "next.success": {},
     "timestamp": {},
     "frame_index": {},
     "episode_index": {},
-    "index": {}
+    "index": {},
+    "task_index": {}
   }
 }
 ```
 
-One parquet row:
+One parquet row (**row 0, as printed by the probe**):
 
 ```
-episode_index=0  frame_index=3  timestamp=0.3  index=3  task_index=0
-action           = [222.0, 97.0]    # pusher target xy, in pixels, range roughly [0, 512]
-observation.state= [221.4, 98.7]    # pusher current xy (pixels)
-next.reward=0.14  next.done=false  next.success=false
+episode_index=0  frame_index=0  timestamp=0.0  index=0  task_index=0
+action           = [233.0, 71.0]    # pusher target xy, in pixels, range roughly [0, 512]
+observation.state= [222.0, 97.0]    # pusher current xy (pixels)
+next.reward=0.1903  next.done=false  next.success=false
+task             = "Push the T-shaped block onto the T-shaped target."
 ```
+
+Arrow types: `action` and `observation.state` are `fixed_size_list<float>[2]` here, but plain
+`list<float>` in B — the adapter must accept both.
 
 **What this teaches the schema**:
 
-1. The `names` `motor_0` / `motor_1` are **misleading** — they are actually task-space xy, not motors. **Upstream field names cannot be trusted; semantics must be asserted by our own `embodiments.yaml`**, which is exactly what the adapter layer is for.
+1. The `names` `motor_0` / `motor_1` are **misleading** — they are actually task-space xy, not motors. And `robot_type` is literally `"unknown"`. **Upstream field names cannot be trusted; semantics must be asserted by our own `embodiments.yaml`**, which is exactly what the adapter layer is for. (M0 also found `names` is a _dict_ keyed by `"motors"`, not the flat list assumed here — one more reason not to build on upstream shapes.)
 2. The unit is **pixels**, and without a scene scale there is no conversion to meters. That shatters the naive idea of "normalize all lengths to meters" → `unit="px"` + `metric_convertible=false` must be a **channel-level** attribute.
 3. No gripper, no joints, no orientation: `space=cartesian_2d`, `channels[*].role="end_effector"`. This is the "non-standard single-arm" source.
 4. `next.reward` is a **per-frame continuous value** (the polygon overlap ratio between the T block and the goal region), and the T block's pose appears in **no** column — so it is unrecoverable once dropped and must be **preserved losslessly** (the original plan's "lossy is fine, keep only episode-level success" was wrong; see §2.2d).
-5. **Termination is decided by the environment**: `coverage > 0.95` is computed by the simulator, and the policy itself emits no end signal → `EpisodeBoundary.termination_source="env_rule"`. But LeRobot exported only `next.done`, so `terminated` (goal achieved) and `truncated` (step limit) may already have been merged upstream — the M0 spike must confirm this first.
+5. **Termination is decided by the environment**: `coverage > 0.95` is computed by the simulator, and the policy itself emits no end signal → `EpisodeBoundary.termination_source="env_rule"`. M0 confirmed the feared loss: the export carries `next.done` / `next.success` / `next.reward` and **no** `terminated` or `truncated`, so `is_truncated=None` (§11, [ADR 002](adr/002-lerobot-v3-layout-and-lost-termination.md)).
 
 ### B. `lerobot/aloha_sim_insertion_human` — dual-arm, 14 DoF (joint space, mixed units)
 
@@ -1023,33 +1056,41 @@ The same directory structure, entirely different content (shape sketch):
   "robot_type": "aloha",
   "fps": 50,
   "total_episodes": 50,
-  "total_frames": 20000,
+  "total_frames": 25000,
   "features": {
     "action": {
       "dtype": "float32",
       "shape": [14],
-      "names": [
-        "left_waist",
-        "left_shoulder",
-        "left_elbow",
-        "left_forearm_roll",
-        "left_wrist_angle",
-        "left_wrist_rotate",
-        "left_gripper",
-        "right_waist",
-        "right_shoulder",
-        "right_elbow",
-        "right_forearm_roll",
-        "right_wrist_angle",
-        "right_wrist_rotate",
-        "right_gripper"
-      ]
+      "names": {
+        "motors": [
+          "left_waist",
+          "left_shoulder",
+          "left_elbow",
+          "left_forearm_roll",
+          "left_wrist_angle",
+          "left_wrist_rotate",
+          "left_gripper",
+          "right_waist",
+          "right_shoulder",
+          "right_elbow",
+          "right_forearm_roll",
+          "right_wrist_angle",
+          "right_wrist_rotate",
+          "right_gripper"
+        ]
+      }
     },
     "observation.state": { "dtype": "float32", "shape": [14] },
     "observation.images.top": { "dtype": "video", "shape": [480, 640, 3] }
   }
 }
 ```
+
+Measured differences from the sketch above: `total_frames` is **25,000**, not 20,000; the data
+is split across **4** parquet files (7,500 rows in the first) while there is still only **one**
+mp4; and every one of the 50 episodes is **exactly 500 frames** (10.0 s @ 50 Hz).
+Only `next.done` is present — **no `next.success`, no `next.reward` at all**.
+Task: "Insert the peg into the socket."
 
 One row of data:
 
@@ -1066,10 +1107,13 @@ observation.state = [-0.010, -0.95, 1.10, ..., 0.019, ...]   # measured joint an
 3. **action and state are "target vs measured" in the same space** — the origin of the `STATE_ACTION_ECHO` false-positive trap (§3); it also shows that action semantics have more than a "space" dimension, and need `is_command: bool` to distinguish commanded values from read-back values, and that state must have a spec symmetric to action's (already captured by §2.2's `SignalSpec`).
 4. Camera count varies by dataset (the sim version usually has only `top`; real ALOHA commonly has 4: top / low / left_wrist / right_wrist) → camera topology must be read data-driven, never hardcoded.
 5. 50 Hz versus pusht's 10 Hz: **the same 8-second trajectory differs by 5× in frame count**. This alone determines that the sampling strategy cannot allocate in proportion to frame count (§6).
+6. **Uniform 500-frame episodes plus a total absence of success/reward** is itself evidence: these episodes end on a fixed step limit, i.e. they are truncated, and no adjudicator ever ran. But since the export states neither, `is_truncated` stays `None` and the observation is preserved in `raw_extra` rather than promoted to a claim ([ADR 002](adr/002-lerobot-v3-layout-and-lost-termination.md)). `success_adjudicator="operator"` with `success=None`.
 
-### C. OXE / RLDS (e.g. `berkeley_autolab_ur5`) — end-effector delta control (nested structure, no timestamps)
+### C. OXE / RLDS (`berkeley_autolab_ur5` 0.1.0) — end-effector delta control (nested structure, no timestamps)
 
-`episode → steps` nesting; after deserialization it looks roughly like:
+`episode → steps` nesting. The shape below is the **flattened leaf list from the dataset's own
+`features.json`**, read straight from the public bucket by `spikes/probe_rlds.py`; the quoted
+descriptions are upstream's:
 
 ```python
 {
@@ -1077,62 +1121,73 @@ observation.state = [-0.010, -0.95, 1.10, ..., 0.019, ...]   # measured joint an
   "steps": [
     {
       "observation": {
-         "image":      uint8[480, 640, 3],   # external camera
-         "hand_image": uint8[480, 640, 3],   # wrist camera
-         "state":      float32[15],          # robot state; semantics require the dataset card
+         "image":            uint8[480, 640, 3],   # external camera
+         "hand_image":       uint8[480, 640, 3],   # wrist camera
+         "image_with_depth": float32[480, 640, 1], # a THIRD stream the earlier draft missed
+         "robot_state":      float32[15],          # key is `robot_state`, not `state`;
+                                                   # description defers to an external web page
+         "natural_language_instruction":  str,
+         "natural_language_embedding":    float32[512],
       },
       "action": {                            # note: a dict, not a flat vector
-         "world_vector":              float32[3],  # end-effector position delta (m), magnitude ~1e-2
-         "rotation_delta":            float32[3],  # end-effector orientation delta (rad)
-         "gripper_closedness_action": float32[1],  # convention may be -1=open / +1=closed
-         "terminate_episode":         float32[3],
+         "world_vector":              float32[3],  # "Delta change in XYZ" (m), |v| p99 = 0.020
+         "rotation_delta":            float32[3],  # "Delta change in roll, pitch, yaw" (rad)
+         "gripper_closedness_action": float32,     # SCALAR. "1 if close gripper, -1 if open
+                                                   #  gripper, 0 if no change."
+         "terminate_episode":         float32,     # SCALAR, not [3] — see ADR 003
       },
-      "reward": 0.0, "discount": 1.0,
-      "is_first": True, "is_last": False, "is_terminal": False,
-      "language_instruction": "put the block in the bowl",
-      "language_embedding": float32[512],
+      "reward": 0.0, "is_first": True, "is_last": False, "is_terminal": False,
     },
   ]
 }
 ```
 
+Measured on train shard 0, episode 0 (71 steps): `world_vector` |v| p50 = 0.0111 / max = 0.0200;
+`rotation_delta` p50 = 0.0027 / max = 0.0301; `gripper_closedness_action` is 0.0 throughout;
+`terminate_episode` is 1.0 on the last step only; the final step's `world_vector` and
+`rotation_delta` are **exactly zero**, confirming the trailing padding step. Split `train` has
+896 episodes across 412 shards; `fileFormat` is `tfrecord`, read without TensorFlow
+([ADR 001](adr/001-rlds-reader-no-tensorflow.md)).
+
 **What this teaches the schema**:
 
-1. **action is a nested dict, and the flattening order is ours to decide**; once chosen it is a public contract → the expanded channel-name list must be written into `ActionSpec.channels` and persisted, otherwise in a few months nobody can explain what column 4 is. Expanded per §2.2a's channel-level schema it looks like this (`dim=10, physical_dim=7, space="mixed"`):
+1. **action is a nested dict, and the flattening order is ours to decide**; once chosen it is a public contract → the expanded channel-name list must be written into `ActionSpec.channels` and persisted, otherwise in a few months nobody can explain what column 4 is. Expanded per §2.2a's channel-level schema it looks like this (`dim=8, physical_dim=7, space="mixed"` — **8, not 10: `terminate_episode` is a scalar**, [ADR 003](adr/003-oxe-action-vector-is-8d.md)):
 
-| idx | name                        | role         | channel.space          | is_delta  | frame  | unit       | is_physical | Note                                    |
-| --- | --------------------------- | ------------ | ---------------------- | --------- | ------ | ---------- | ----------- | --------------------------------------- |
-| 0-2 | `ee.dx/dy/dz`               | end_effector | `ee_translation_delta` | **true**  | `base` | m          | true        | magnitude ~1e-2                         |
-| 3-5 | `ee.drx/dry/drz`            | end_effector | `ee_rotation_delta`    | **true**  | `base` | rad        | true        | `rotation.repr` pending M0 confirmation |
-| 6   | `gripper`                   | gripper      | `gripper`              | **false** | None   | normalized | true        | absolute command, not a delta           |
-| 7-9 | `flag.terminate_episode[i]` | control_flag | `flag`                 | false     | None   | None       | **false**   | non-physical channels inside one vector |
+| idx | name                     | role         | channel.space          | is_delta | frame  | unit       | is_physical | Note                                         |
+| --- | ------------------------ | ------------ | ---------------------- | -------- | ------ | ---------- | ----------- | -------------------------------------------- |
+| 0-2 | `ee.dx/dy/dz`            | end_effector | `ee_translation_delta` | **true** | `base` | m          | true        | measured \|v\| p99 = 0.020                   |
+| 3-5 | `ee.drx/dry/drz`         | end_effector | `ee_rotation_delta`    | **true** | `base` | rad        | true        | `rotation.repr="euler_rpy"`, compose unknown |
+| 6   | `gripper`                | gripper      | `gripper_command`      | **true** | None   | normalized | true        | **ternary change command -1/0/+1**           |
+| 7   | `flag.terminate_episode` | control_flag | `flag`                 | false    | None   | None       | **false**   | a non-physical channel inside one vector     |
 
 This table is the entire argument for §2.2a's "`space` / `is_delta` / `frame` must be pushed down to the channel level": **not one column is homogeneous across the four rows.**
 
-2. **Deltas and absolutes are mixed in the same vector**: the 6 pose dimensions are deltas (fundamentally different from A/B's absolutes), yet the gripper is an absolute command. Any cross-source statistic (mean/variance/threshold) must first bucket by `is_delta`, and bucketing can only be done at **channel granularity** — otherwise the gripper gets counted as a delta; `ACTION_RANGE`'s thresholds are therefore maintained per `(embodiment, channel.space)`, not per `(embodiment, spec.space)`.
-   - An incidental insight: **the rotation representation of `rotation_delta[3]` is declared nowhere** — axis-angle / rotation vector / Euler XYZ / Euler ZYX are all 3 radians. Without knowing which, it cannot be integrated nor aligned with other datasets. The M0 spike checks the dataset card first, and failing that writes `rotation.repr="unknown"` (the field must exist; see §2.2a).
-3. **There are no timestamps in `steps`**, only an implied control frequency (e.g. 5 Hz). Time must be synthesized, `provenance.timestamp_source="synthesized@5Hz"`, and all timestamp rules are `SKIPPED`. This is the origin of that design point in §3.
-4. **`is_first/is_last/is_terminal` and the trailing padding step**: RLDS's final step often carries a zero or placeholder action, and counting it into statistics pollutes `ACTION_JERK` and static detection → during normalization, trim it by `is_last` and record it in `raw_extra`.
-5. **Gripper conventions differ** (-1/+1 vs 0/1 vs continuous width) → normalize to `0=closed, 1=open` and preserve the inverse-transform parameters.
-6. `language_instruction` (text) **must be preserved losslessly**; `language_embedding` (512-D) **may be dropped** — it is a derivative recomputable from the text, takes space, and is bound to a specific encoder version. This is the best teaching example of the "lossless / droppable" boundary. Note that this batch of fields (along with `discount` and `is_first/is_last/is_terminal`) are all **per-step**, so the unmodeled parts go into `frames.parquet`'s `raw.*` columns, not the episode-level `raw_extra` — the origin of the split rule at the end of §2.2d.
-7. The semantics of `observation.state[15]` are inconsistent across sub-datasets and the documentation is often vague. **Principle: for a field whose semantics are uncertain, prefer `state=NULL` + preserving it verbatim in `raw_extra` over guessing a role** — a wrong guess is more harmful than absence.
+2. **Deltas and absolutes are mixed in the same vector** — and M0 made this _sharper_ than the draft assumed. The 6 pose dimensions are deltas, and so, it turns out, is the gripper: `"1 if close gripper, -1 if open gripper, 0 if no change"` is a **ternary change command**, not an absolute opening ([ADR 003](adr/003-oxe-action-vector-is-8d.md)). So `is_delta` differs between B's gripper channel and C's gripper channel **within the same `role`**, which no spec-level attribute could ever express. Any cross-source statistic must first bucket by `is_delta`, and bucketing can only be done at **channel granularity**; `ACTION_RANGE`'s thresholds are therefore maintained per `(embodiment, channel.space)`, not per `(embodiment, spec.space)`.
+   - An incidental insight, now half-resolved: the representation of `rotation_delta[3]` — axis-angle / rotation vector / Euler XYZ / Euler ZYX are all 3 radians. M0 found upstream's own description says "Delta change in roll, pitch, yaw", so `rotation.repr="euler_rpy"`; but the **composition order is still stated nowhere**, so `rotation.compose="unknown"` (the field must exist; see §2.2a).
+3. **There are no timestamps in `steps`** — M0 confirmed: no time field appears anywhere in the 14 flattened leaves. Time must be synthesized, `provenance.timestamp_source="synthesized@5Hz"`, and all timestamp rules are `SKIPPED`. This is the origin of that design point in §3.
+4. **`is_first/is_last/is_terminal` and the trailing padding step**: RLDS's final step often carries a zero or placeholder action, and counting it into statistics pollutes `ACTION_JERK` and static detection → during normalization, trim it by `is_last` and record it in `raw_extra`. M0 found something odder still in episode 0: `is_last` and `is_terminal` are set on the **final two** steps, not just the last. The adapter must therefore trim defensively by scanning for the first `is_last`, and record how many steps it trimmed.
+5. **Gripper conventions differ** (-1/+1 vs 0/1 vs continuous width) → for **absolute** gripper channels normalize to `0=closed, 1=open` and preserve the inverse-transform parameters. C's gripper is **not** absolute, so it must be left in its native -1/0/+1 encoding with `is_delta=true`; mapping "no change" (0) onto "fully closed" would be a silent reinterpretation.
+6. `natural_language_instruction` (text) **must be preserved losslessly**; `natural_language_embedding` (512-D) **may be dropped** — it is a derivative recomputable from the text, takes space, and is bound to a specific encoder version. This is the best teaching example of the "lossless / droppable" boundary; it is declared in `berkeley_ur5.drop_channels` in `config/sources.yaml`. Note that this batch of fields (along with `is_first/is_last/is_terminal`) are all **per-step**, so the unmodeled parts go into `frames.parquet`'s `raw.*` columns, not the episode-level `raw_extra` — the origin of the split rule at the end of §2.2d.
+7. The semantics of `observation/robot_state[15]` are inconsistent across sub-datasets and the documentation is often vague — here the description literally defers to an external web page. **Principle: for a field whose semantics are uncertain, prefer `state=NULL` + preserving it verbatim over guessing a role** — a wrong guess is more harmful than absence. `state_spec.space="unknown"`.
 8. **`terminate_episode` is a control flag stuffed into the action vector, not a physical quantity**: here the answer to "who decides the ending" is **the policy itself** (`termination_source="policy_flag"`), completely unlike A's environment rule, B's operator stopping the recording, and D's after-the-fact annotation. Therefore:
-   - The dimensions are declared `dim=10, physical_dim=7`, with those 3 columns as `role="control_flag", is_physical=False`, excluded from `ACTION_RANGE / ACTION_JERK / STATIC_EPISODE` statistics;
+   - The dimensions are declared `dim=8, physical_dim=7`, with that 1 column as `role="control_flag", is_physical=False`, excluded from `ACTION_RANGE / ACTION_JERK / STATIC_EPISODE` statistics;
    - If we ultimately keep only 7 dimensions, **that is a lossy transform** and must be recorded as `provenance.transforms = [{"op": "drop_channels", "channels": [...], "reason": ...}]`; it cannot be written as "7 dims (3+3+1)" as if lossless, the way the original table did;
-   - `is_last` and `is_terminal` must be read separately: `is_last & ~is_terminal` means truncated (`is_truncated=True`), the final state is not terminal, and offline RL must not treat $V(s_T)$ as 0 here.
+   - `is_last` and `is_terminal` must be read separately: `is_last & ~is_terminal` means truncated (`is_truncated=True`), the final state is not terminal, and offline RL must not treat $V(s_T)$ as 0 here. **C is the only one of the four sources that can populate this honestly** (§11).
 
-9. **Cameras: two of them, one being a wrist camera, and both inline frames rather than mp4** (the direct origin of §2.2e's new `CameraSpec` and the split between `has_rgb` and `has_video`):
+9. **Cameras: three of them, one being a wrist camera and one carrying depth, and all inline frames rather than mp4** (the direct origin of §2.2e's new `CameraSpec` and the split between `has_rgb` and `has_video`):
 
 ```json
 "cameras": [
-  {"name": "image",      "mount": "static", "resolution": [480, 640], "encoding": "inline_frames"},
-  {"name": "hand_image", "mount": "wrist",  "resolution": [480, 640], "encoding": "inline_frames"}
+  {"name": "image",            "mount": "static", "resolution": [480, 640], "encoding": "inline_frames"},
+  {"name": "hand_image",       "mount": "wrist",  "resolution": [480, 640], "encoding": "inline_frames"},
+  {"name": "image_with_depth", "mount": "static", "resolution": [480, 640], "encoding": "inline_frames",
+   "note": "float32 single channel — depth, not RGB"}
 ]
 ```
 
-"Violent frame-to-frame change" is normal on `wrist` and anomalous on `static`; and `inline_frames` means §1's `--no-video` is a no-op for C.
+"Violent frame-to-frame change" is normal on `wrist` and anomalous on `static`; and `inline_frames` means §1's `--no-video` is a no-op for C. The images dominate the bytes: shard 0 is 178.7 MB for 3 episodes, and episode 0 alone is 54.85 MB.
 
-10. **It is the only source with no stable upstream episode ID**: one shard holds many episodes, and identity is only the index within the shard. `upstream_id = f"{split}/{shard}#{i}"`, and `content_hash` must be computed over the **normalized episode bytes** rather than the shard file — otherwise the moment upstream re-shards, the entire old corpus is misidentified as new, landing directly on an acceptance criterion. See §5.
+10. **It is the only source with no stable upstream episode ID**: one shard holds many episodes (train = 896 episodes over 412 shards, ~2–3 each), and identity is only the index within the shard. `upstream_id = f"{split}/{shard}#{i}"`, and `content_hash` must be computed over the **normalized episode bytes** rather than the shard file — otherwise the moment upstream re-shards, the entire old corpus is misidentified as new, landing directly on an acceptance criterion. The shard layout is pinned in `config/sources.yaml` as `shard_layout_revision: "train:412-shards@0.1.0"` so a re-shard is detectable rather than silent. See §5.
 
 ### D. EPIC-KITCHENS-100 (official release) — human egocentric data where action exists but at **a different level of representation**
 
@@ -1140,7 +1195,7 @@ Structure and decisions are in §1.1. Among the four sources it carries three th
 
 ```json
 {
-  "episode_uid": "epic100:P01_01_16",
+  "episode_uid": "epic100:P01_101_0",
   "schema_version": 1,
   "embodiment": "human_ego",
   "task": "open door",
@@ -1237,7 +1292,7 @@ Structure and decisions are in §1.1. Among the four sources it carries three th
     "upstream_revision": "epic-kitchens-100-annotations@<sha>",
     "adapter_version": "epic_adapter@<git-sha>",
     "timestamp_source": "annotation_seconds",
-    "frame_index_source": "derived_from_seconds@50fps",
+    "frame_index_source": "derived_from_seconds@50",
     "signal_origin": {
       "gyro": "measured",
       "accel": "measured",
@@ -1256,29 +1311,30 @@ Structure and decisions are in §1.1. Among the four sources it carries three th
 }
 ```
 
-Contrast this with **another episode in the same source** (an old video, no IMU, failed SfM reconstruction): `has_imu=false`, `has_camera_pose=false`, `state_spec.level="absent"`. Two episodes, same source, same adapter, yet different `capabilities_json` — precisely the target of the acceptance assertion in §1.1 point 5.
+Contrast this with **another episode in the same source** — `P01_01`, an EK-55-era video whose IMU files return HTTP 404: `has_imu=false`, and where SfM registration failed, `has_camera_pose=false` with `state_spec.level="absent"`. Both videos are pinned in `config/sources.yaml`, so this is measured, not hypothetical. Two episodes, same source, same adapter, yet different `capabilities_json` — precisely the target of the acceptance assertion in §1.1 point 5.
 
 ### Four-source comparison (this table is the argument for "why they cannot be squashed into one vector")
 
-| Dimension                 | A pusht                          | B aloha                     | C ur5 (RLDS)                                      | D epic100                                             |
-| ------------------------- | -------------------------------- | --------------------------- | ------------------------------------------------- | ----------------------------------------------------- |
-| Storage                   | Parquet + MP4                    | Parquet + MP4               | Nested TFRecord                                   | CSV annotations + JSON poses + IMU + MP4              |
-| Embodiment                | Planar pusher                    | Dual-arm 6+1 ×2             | Single UR5 arm                                    | Human hands / head-mounted camera                     |
-| action level              | Per-frame continuous             | Per-frame continuous        | Per-frame continuous                              | **Episode-level symbolic label**                      |
-| action space              | Task-space absolute xy           | Joint-space absolute angles | End-effector delta pose                           | (verb, noun) + time interval                          |
-| action dim                | 2                                | 14                          | 10 (7 physical + 3 control flags)                 | 0 (no per-frame columns)                              |
-| state dim                 | 2                                | 14                          | 15 (semantics unclear)                            | Pose 7 (frame clock) + IMU 6 (own clock, §2.2h)       |
-| Units                     | **Pixels**                       | rad + normalized opening    | m + rad                                           | rad/s + m/s² + **scale-free pose**                    |
-| Signal provenance         | Measured                         | Measured                    | Measured                                          | **Mixed: measured / SfM-estimated / human-annotated** |
-| Delta?                    | No                               | No                          | **Pose yes / gripper no (mixed in one vector)**   | No                                                    |
-| Timestamps                | Real                             | Real                        | **None (must be synthesized)**                    | Annotation seconds → derived frame index              |
-| Frame rate                | 10 Hz                            | 50 Hz                       | ~5 Hz                                             | Events ~0.3 Hz; IMU ~200 Hz; video 50/59.94 fps       |
-| Cameras                   | 1 (96×96)                        | 1–4 (640×480)               | 2 (static + **wrist**), **inline frames, no mp4** | 1 (head, not fetched by default)                      |
-| Real / sim                | Sim                              | Sim                         | Real robot                                        | Real human                                            |
-| Language instruction      | Yes (single task)                | Yes (single task)           | Yes (per step)                                    | verb+noun composed + original narration               |
-| Gripper                   | None                             | Continuous opening ×2       | ±1 binary                                         | None                                                  |
-| Termination decided by    | Environment rule (coverage>0.95) | Operator stops recording    | **Policy output `terminate_episode`**             | Annotator drawing the interval afterwards             |
-| Success adjudicator       | Simulator                        | Operator                    | Policy                                            | **None (not unknown — nonexistent)**                  |
-| Within-source consistency | Uniform                          | Uniform                     | Uniform                                           | **Capabilities differ per episode**                   |
+| Dimension                   | A pusht                          | B aloha                     | C ur5 (RLDS)                                                  | D epic100                                                         |
+| --------------------------- | -------------------------------- | --------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Storage                     | Parquet + MP4                    | Parquet + MP4               | Nested TFRecord                                               | CSV annotations + JSON poses + IMU + MP4                          |
+| Embodiment                  | Planar pusher                    | Dual-arm 6+1 ×2             | Single UR5 arm                                                | Human hands / head-mounted camera                                 |
+| action level                | Per-frame continuous             | Per-frame continuous        | Per-frame continuous                                          | **Episode-level symbolic label**                                  |
+| action space                | Task-space absolute xy           | Joint-space absolute angles | End-effector delta pose                                       | (verb, noun) + time interval                                      |
+| action dim                  | 2                                | 14                          | **8** (7 physical + 1 control flag)                           | 0 (no per-frame columns)                                          |
+| state dim                   | 2                                | 14                          | 15 (semantics unclear)                                        | Pose 7 (frame clock) + IMU 6 (own clock, §2.2h)                   |
+| Units                       | **Pixels**                       | rad + normalized opening    | m + rad                                                       | rad/s + m/s² (**both measured**) + **scale-free pose**            |
+| Signal provenance           | Measured                         | Measured                    | Measured                                                      | **Mixed: measured / SfM-estimated / human-annotated**             |
+| Delta?                      | No                               | No                          | **Pose yes / gripper also yes (a −1/0/+1 change command)**    | No                                                                |
+| Timestamps                  | Real                             | Real                        | **None (must be synthesized)**                                | Annotation seconds → derived frame index                          |
+| Frame rate                  | 10 Hz                            | 50 Hz                       | ~5 Hz                                                         | Events ~0.3 Hz; IMU **195 Hz**; video **5 distinct official fps** |
+| Cameras                     | 1 (96×96)                        | 1 (640×480, sim)            | **3** (static + **wrist** + depth), **inline frames, no mp4** | 1 (head, not fetched by default)                                  |
+| Real / sim                  | Sim                              | Sim                         | Real robot                                                    | Real human                                                        |
+| Language instruction        | Yes (single task)                | Yes (single task)           | Yes (per step)                                                | verb+noun composed + original narration                           |
+| Gripper                     | None                             | Continuous opening ×2       | **Ternary change command −1/0/+1**                            | None                                                              |
+| Termination decided by      | Environment rule (coverage>0.95) | Operator stops recording    | **Policy output `terminate_episode`**                         | Annotator drawing the interval afterwards                         |
+| Success adjudicator         | Simulator                        | Operator                    | Policy                                                        | **None (not unknown — nonexistent)**                              |
+| `terminated` vs `truncated` | **Lost upstream (§11)**          | **Lost upstream (§11)**     | **Preserved** (`is_last & ~is_terminal`)                      | N/A (interval, not a rollout)                                     |
+| Within-source consistency   | Uniform                          | Uniform                     | Uniform                                                       | **Capabilities differ per episode**                               |
 
 **Conclusion**: the only thing that can genuinely be unified is the **structure** (how episodes/frames are organized, channel-level metadata, capability declarations, provenance) — **not the numbers**. That is the entire basis for the schema in §2. And the last three rows only appeared once D was added: **representation level, signal trustworthiness, and within-source consistency are invisible when looking only at A/B/C** — because those three dimensions are constant across the three robot datasets, which makes it easy to mistake them for "not worth modeling".

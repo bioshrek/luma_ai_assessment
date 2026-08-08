@@ -21,19 +21,27 @@ fixed-width vector is wrong and is explicitly rejected by the design.
 
 ## Current State
 
-**This repository currently contains documentation only. There is no code yet.**
+**M0 (feasibility spike) is complete. M1 is next: the walking skeleton.**
 
 ```
 docs/technical_design.md      # the design authority — domain model, schema, QC, layering
 docs/implementation_plan.md   # milestones M0–M8, each with verification commands
+docs/adr/000..004             # M0's decisions: source selection, no-TF RLDS reader,
+                              #   LeRobot v3.0 + lost termination, C's 8-D action, EPIC fps/IMU
 docs/assessment.md            # original requirements (Chinese)
 docs/assessment_for_ai.md     # requirements, agent-facing
 docs/ai_chat_sessions/*.json  # raw AI transcripts — archival, do not edit or translate
+pyproject.toml                # uv project; `spike` dependency group is M0-only and throwaway
+config/sources.yaml           # the four sources, with measured max_episodes caps
+spikes/probe_{lerobot,rlds,epic}.py   # throwaway M0 probes; _out/*.txt is their captured output
+src/rdp/__init__.py           # package stub only — no domain code yet
 ```
 
-Everything under `src/`, `tests/`, `config/`, and `scripts/` described below **does not exist
-yet**. Create it milestone by milestone per the implementation plan; do not scaffold the whole
-tree up front.
+**Read `docs/adr/000`–`004` before touching an adapter.** M0 measured four things the design
+had guessed wrong, and all four are now corrected in `docs/technical_design.md` Appendix A.
+
+`tests/` and `scripts/` still **do not exist**. Create them milestone by milestone per the
+implementation plan; do not scaffold the whole tree up front.
 
 ## Prime Directive: the two acceptance scenarios
 

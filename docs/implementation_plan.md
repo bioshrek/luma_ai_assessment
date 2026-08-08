@@ -108,21 +108,38 @@ decision, and a `docs/adr/000-source-selection.md` recording the final four sour
 **Verification**
 
 ```bash
-python spikes/probe_lerobot.py   # prints info.json fields + first rows for A and B
-python spikes/probe_rlds.py      # prints one episode's step keys and shapes, or fails loudly
-python spikes/probe_epic.py      # prints one segment, its pose coverage %, and measured IMU units
+# the spike group is heavyweight and throwaway; it is never a runtime dependency
+uv run --group spike python spikes/probe_lerobot.py  # info.json fields + first rows for A and B
+uv run --group spike python spikes/probe_rlds.py     # one episode's step keys and shapes, or fails loudly
+uv run --group spike python spikes/probe_epic.py     # one segment, pose coverage %, measured IMU units
 ```
 
-**Exit criteria**
+Captured output is committed under `spikes/_out/*.txt`; downloaded data lands in the gitignored
+`spikes/_data/`.
 
-- [ ] Four sources confirmed reachable, or a documented substitution.
-- [ ] IMU unit determined by measurement and written into the design.
-- [ ] `terminated`/`truncated` availability for A/B answered; if lost upstream, added to the
-      known-limitations section.
-- [ ] `config/sources.yaml` drafted with `max_episodes` caps per source.
+**Exit criteria** — **all met; M0 complete.**
 
-**Risk:** TFDS on macOS/Python 3.11. Mitigation is pre-authorized above — do not spend more than
-the spike budget fighting it; switch.
+- [x] Four sources confirmed reachable, **no substitution** — [ADR 000](adr/000-source-selection.md).
+- [x] IMU units determined by measurement and written into the design (§1.1 point 3): accel `m/s^2`
+      (mean |a| = 9.8998), gyro `rad/s` (p99 = 1.85), sampled at 195 Hz —
+      [ADR 004](adr/004-epic-frame-fps-and-imu-units.md).
+- [x] `terminated`/`truncated` for A/B answered: **lost upstream**, registered in design §11 —
+      [ADR 002](adr/002-lerobot-v3-layout-and-lost-termination.md).
+- [x] `config/sources.yaml` drafted with `max_episodes` caps per source, derived from measured
+      episode lengths (≈50k frames total).
+
+**What the spike changed in the design** (Definition of Done gate 7 — each is a design edit plus
+an ADR):
+
+| ADR | Finding                                                                                                                                                                                                      |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 001 | TFDS is unusable (protobuf gencode 6.31 vs runtime 5.29); C is read by parsing TFRecord + `tf.train.Example` directly, with no TensorFlow dependency                                                         |
+| 002 | LeRobot is v3.0: many episodes per parquet, one mp4 per dataset, boundaries in `meta/episodes`; and `terminated`/`truncated` do not survive the export                                                       |
+| 003 | C's action is **8-D, not 10-D** (`terminate_episode` is a scalar), and its gripper is a ternary **change** command, not an absolute position                                                                 |
+| 004 | D's annotation frame indices use an **extraction** fps (50 fps videos @50, all others @60 — 100% of 67,217 segments reproduced) that differs from the official fps for 42% of the corpus; IMU units measured |
+
+**Risk (retired):** TFDS on macOS/Python 3.12 did fail, exactly as anticipated. The pre-authorized
+fallback was taken within the spike budget; C was kept.
 
 ---
 
@@ -266,7 +283,7 @@ pytest tests/acceptance -q                          # M2 assertions must still p
 - [ ] B: a single episode's `ActionSpec` shows 12 channels with `unit="rad"`,
       `metric_convertible=true` and 2 with `role="gripper"`, `metric_convertible=false`, split
       across `arm_id` left/right.
-- [ ] C: `SignalSpec.space == "mixed"`, `dim=10`, `physical_dim=7`; `terminate_episode` channels
+- [ ] C: `SignalSpec.space == "mixed"`, `dim=8`, `physical_dim=7`; the `terminate_episode` channel
       have `is_physical=false`; `state_spec.space == "unknown"`.
 - [ ] C: `VIDEO_FRAME_MISMATCH` (once it exists) and any `has_video` rule resolve to `SKIPPED`,
       not `FAIL`.

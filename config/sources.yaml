@@ -1,0 +1,78 @@
+# Source registry. Committed — no absolute local paths, no credentials.
+# Anything machine-specific belongs in config/sources.local.yaml (gitignored).
+#
+# `max_episodes` caps are data-driven, from the M0 spike measurements recorded in
+# docs/adr/000-source-selection.md. frames/episode below are measured, not guessed.
+
+version: 1
+
+defaults:
+  with_video: false # see design §1: video metadata only by default
+  max_episodes: 50
+
+sources:
+  # A — 2D planar pushing, absolute task-space xy in PIXELS. Not an arm.
+  - source_id: pusht
+    kind: lerobot
+    uri: hf://datasets/lerobot/pusht
+    revision: main
+    embodiment: pusht_planar
+    license: apache-2.0
+    max_episodes: 80 # measured 124.5 frames/episode @10 Hz -> ~10.0k frames
+    notes: >-
+      LeRobot codebase_version v3.0: all episodes share one parquet file and one mp4;
+      episode boundaries come from meta/episodes. Channel names motor_0/motor_1 are
+      misleading and are overridden by config/embodiments.yaml.
+
+  # B — ALOHA bimanual, absolute joint angles (rad) + 2 grippers. Same format as A.
+  - source_id: aloha_sim_insertion
+    kind: lerobot
+    uri: hf://datasets/lerobot/aloha_sim_insertion_human
+    revision: main
+    embodiment: aloha_bimanual
+    license: mit
+    max_episodes: 50 # measured exactly 500 frames/episode @50 Hz -> 25.0k frames
+    notes: >-
+      Every episode is exactly 500 frames (10 s), so termination is a step limit,
+      and there is no success or reward column at all.
+
+  # C — OXE / RLDS. End-effector delta pose + gripper command + terminate flag.
+  - source_id: berkeley_ur5
+    kind: rlds
+    uri: https://storage.googleapis.com/gresearch/robotics/berkeley_autolab_ur5/0.1.0
+    revision: "0.1.0"
+    split: train
+    shard_layout_revision: "train:412-shards@0.1.0"
+    embodiment: ur5_single_arm
+    license: cc-by-4.0
+    max_episodes: 80 # measured ~71 steps/episode -> ~5.7k frames
+    reader: tfrecord_direct # docs/adr/001-rlds-reader-no-tensorflow.md: no TensorFlow
+    drop_channels:
+      # 512-D per-step derivative, recomputable from the text; see design §A.C.6
+      - steps/observation/natural_language_embedding
+    notes: >-
+      No stable upstream episode id: identity is (split, shard, index-in-shard), so
+      content_hash must be computed over normalized episode bytes, not shard bytes.
+
+  # D — EPIC-KITCHENS-100, taken by layer. Action is an episode-level symbolic label.
+  - source_id: epic100
+    kind: epic_kitchens
+    uri: https://github.com/epic-kitchens/epic-kitchens-100-annotations
+    revision: master
+    embodiment: human_ego
+    license: cc-by-nc-4.0 # non-commercial; propagates to export lines
+    max_episodes: 60 # action segments, ~3 s each -> ~9k frames @50 fps
+    layers: [annotations, camera_pose, imu]
+    # Frame indices are derived from seconds at the EXTRACTION fps, which is NOT the video's
+    # official fps: 50 fps videos were extracted at 50, everything else at a flat 60.
+    # Measured against all 67,217 train segments (100% reproduced). See ADR 004.
+    frame_extraction_fps:
+      when_official_fps_is_50: 50
+      otherwise: 60
+    videos: # spread across participants; deliberately mixes IMU present/absent
+      - P01_01 # EPIC-55 era, official 59.94 fps: no GoPro metadata -> has_imu=false
+      - P01_101 # extension, official 50 fps: has GoPro metadata -> has_imu=true
+      - P28_101 # EPIC-Fields example reconstruction is published for this video
+    notes: >-
+      Seconds are authoritative, frame indices are derived. The local 30 fps transcode is a
+      mirror, registered in config/sources.local.yaml, never an authoritative source.
