@@ -287,7 +287,10 @@ schema. Never widen the schema speculatively.
 - **C (RLDS/OXE)** via `RLDSAdapter`. Forces: channel-level `space`/`is_delta`/`frame`,
   `Channel.rotation`, `role="control_flag"` with `is_physical=False`, `has_rgb` vs `has_video`
   split, `CameraSpec.mount`/`encoding`, frame-level `raw.` columns, synthesized timestamps, and
-  the `split/shard#index` + `shard_layout_revision` identity scheme.
+  an identity scheme that survives a re-shard. (The sketch here was `split/shard#index`; what
+  shipped is `split#global_index` with the layout carried in `adapter_version` — a shard-derived
+  identity would have made a re-shard look like new data. See
+  [ADR 009](adr/009-rlds-identity-clock-and-padding.md), decisions 1–2.)
 - Characterization tests per source: assert channel names, order, units, gripper conventions, and
   physical-vs-total dim against committed golden fixtures.
 - `embodiments.yaml` registry asserting semantics independently of upstream field names (pusht's
@@ -304,17 +307,58 @@ pytest tests/acceptance -q                          # M2 assertions must still p
 
 **Exit criteria**
 
-- [ ] Adding B and C touched **zero lines** in `domain/` beyond ADR-approved schema changes, and
+- [x] Adding B and C touched **zero lines** in `domain/` beyond ADR-approved schema changes, and
       zero lines in `application/` — verifiable with `git diff --stat` over the milestone range.
-- [ ] B: a single episode's `ActionSpec` shows 12 channels with `unit="rad"`,
+      The only `domain/` change is one enum member, `RotationRepr.EULER_RPY`
+      ([ADR 009](adr/009-rlds-identity-clock-and-padding.md), decision 5).
+- [x] B: a single episode's `ActionSpec` shows 12 channels with `unit="rad"`,
       `metric_convertible=true` and 2 with `role="gripper"`, `metric_convertible=false`, split
       across `arm_id` left/right.
-- [ ] C: `SignalSpec.space == "mixed"`, `dim=8`, `physical_dim=7`; the `terminate_episode` channel
+- [x] C: `SignalSpec.space == "mixed"`, `dim=8`, `physical_dim=7`; the `terminate_episode` channel
       have `is_physical=false`; `state_spec.space == "unknown"`.
-- [ ] C: `VIDEO_FRAME_MISMATCH` (once it exists) and any `has_video` rule resolve to `SKIPPED`,
-      not `FAIL`.
-- [ ] Re-running the pipeline after C's shard layout changes marks episodes `stale`, not `new`.
-- [ ] One ADR per schema revision, each naming the fact that forced it.
+- [x] C: `VIDEO_FRAME_MISMATCH` (once it exists) and any `has_video` rule resolve to `SKIPPED`,
+      not `FAIL`. C sets `has_video=false` with three `inline_frames` cameras and
+      `has_rgb=true`, so the gate is in place before the rule is.
+- [x] Re-running the pipeline after C's shard layout changes marks episodes `stale`, not `new`
+      (`stale_renormalize == 2`, `discovered == 0`, identities unchanged).
+- [x] One ADR per schema revision, each naming the fact that forced it —
+      [008](adr/008-aloha-channel-units-and-unverified-gripper.md) and
+      [009](adr/009-rlds-identity-clock-and-padding.md).
+
+**Outcome**
+
+`rdp run --source aloha_sim_insertion` and `rdp run --source berkeley_ur5` both complete on real
+upstream data, and a second run of each reports `skipped_already_processed` with nothing
+re-ingested. 24 episodes across three sources, 19 new tests (133 total), all gates green.
+
+Adding **B cost no Python at all** — one `sources.yaml` entry, one `embodiments.yaml` entry, one
+fixture. Adding **C cost one adapter, one 130-line TFRecord reader, and one streaming method on
+the fetcher**, with `application/` untouched.
+
+**Discovered during M3** (recorded in ADRs [008](adr/008-aloha-channel-units-and-unverified-gripper.md)
+and [009](adr/009-rlds-identity-clock-and-padding.md)):
+
+1. B's gripper is _approximately_ normalized and overflows `[0, 1]` in both directions, and its
+   open/closed direction is published nowhere. Recorded as
+   `convention: normalized_unverified_direction` with an identity inverse — an explicit unknown
+   rather than a plausible guess (ADR 008, decision 4).
+2. B's `timestamp` is bit-identical to `float32(frame_index / fps)` at 50 Hz, exactly as pusht's
+   is. All three sources ingested so far have synthesized clocks, so `TS_MONOTONIC` is `SKIPPED`
+   on all 24 episodes.
+3. B's action space is `mixed`, not `joint_position`: 12 radian joints plus 2 normalized
+   grippers. Spec-level space is _derived_, never declared, and this is why.
+4. C's episodes end with **two** placeholder steps, not one, and zero-valued actions also occur
+   mid-episode — so padding is detected by `is_last` **and** an all-zero pose, never by either
+   alone (ADR 009, decision 4).
+5. C's shard layout had to be separated from C's identity. Identity is the index within the
+   split; the layout rides in `adapter_version`, which turns a re-shard into a re-normalization
+   through machinery that already existed (ADR 009, decisions 1–2).
+6. `RotationRepr` had no honest value for "roll/pitch/yaw, order unstated". `EULER_XYZ` would
+   assert an order upstream never gives; `UNKNOWN` would discard the axis naming it does give.
+   `EULER_RPY` was added — the one schema change of the milestone, and no `SCHEMA_VERSION` bump,
+   since a new enum member invalidates no existing episode.
+7. `max_episodes` for C was cut from 80 to 12: an episode stages ~55 MB of inline camera frames,
+   and `raw/` is kept verbatim.
 
 ---
 

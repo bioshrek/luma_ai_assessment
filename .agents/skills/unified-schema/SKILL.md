@@ -67,9 +67,11 @@ by `measured` standards is systematic friendly fire. Hence the automatic severit
 
 ### `dim` vs `physical_dim`
 
-C's action vector is `dim=10, physical_dim=7`: 3 of those columns are `terminate_episode`
-control flags — no unit, no physical limits, a 0→1 step in the final frame. Treating them as
+C's action vector is `dim=8, physical_dim=7`: one of those columns is `terminate_episode`, a
+control flag — no unit, no physical limits, a 0→1 step in the final frame. Treating it as
 physical makes `ACTION_RANGE` limits meaningless and fires `ACTION_JERK` on **every** C episode.
+(Some OXE datasets encode `terminate_episode` as `float32[3]`; `berkeley_autolab_ur5` uses a
+scalar — measured, see ADR 003.)
 
 All cross-channel statistics (mean/std/travel/jerk/limits) run **only** over
 `is_physical == True` channels, via the domain layer's `physical_view()`. Rules never receive the
@@ -147,9 +149,21 @@ Euler ZYX. Without knowing which, the data cannot be integrated, compared, or co
 effectively unreadable. `repr="unknown"` is legal; a **missing field** is not. Delta rotations
 also need `compose` (`ΔR·R` vs `R·ΔR`); absolute rotations set it to `None`.
 
+`repr="euler_rpy"` exists for the case C forces: upstream names the axes ("Delta change in roll,
+pitch, yaw") but never states the order. `euler_xyz` would assert an order nobody gave, and
+`unknown` would throw away the naming that _was_ given (ADR 009).
+
 **Gripper conventions.** Normalize to `0=closed, 1=open`, and **preserve the inverse parameters**
-(`scale`, `offset`) plus `original_convention`. OXE commonly uses `-1=close/+1=open`; ALOHA uses
-a continuous aperture. Without the inverse parameters, "normalization is reversible" is a slogan.
+(`scale`, `offset`) plus `original_convention`. Without the inverse parameters, "normalization is
+reversible" is a slogan.
+
+But normalize only what you can _verify_. C's gripper is a ternary **change** command
+(`+1` close / `0` no change / `−1` open), so it is not an absolute opening at all and keeps its
+native encoding with `is_delta=true`. B's grippers are continuous, overflow `[0, 1]`, and their
+open/closed direction is published nowhere — so they are stored verbatim with
+`convention: normalized_unverified_direction` and an identity inverse (ADR 008). A guessed
+direction is worse than a recorded unknown, and min-max renormalization at ingestion is rejected
+outright.
 
 **Units are per channel, never per episode.** B's 14-D vector is 12 channels of `rad` plus 2
 normalized apertures. A's action is in **pixels** and without a scene scale cannot become meters

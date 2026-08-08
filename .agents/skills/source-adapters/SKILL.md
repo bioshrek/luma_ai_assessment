@@ -101,7 +101,7 @@ One row: `action = [222.0, 97.0]` (pusher target xy, **pixels**, range ~[0, 512]
   pose is stored **nowhere** — unrecomputable once dropped.
 - **`timestamp` is not a clock.** It is bit-for-bit `float32(frame_index / fps)`, so
   `timestamp_source="synthesized@10Hz"` and every timestamp rule is `SKIPPED`
-  ([ADR 005](../../../docs/adr/005-pusht-timestamps-are-synthesized.md)). The adapter *measures*
+  ([ADR 005](../../../docs/adr/005-pusht-timestamps-are-synthesized.md)). The adapter _measures_
   this per episode rather than hardcoding it per source.
 - Termination is decided by the **environment** (`coverage > 0.95`):
   `termination_source="env_rule"`, `success_adjudicator="simulator"`. LeRobot exported only
@@ -118,9 +118,11 @@ file hash cannot distinguish them.
 ## Source B — `lerobot/aloha_sim_insertion_human` (dual-arm 14-DoF, mixed units)
 
 Same directory structure as A, so `LeRobotAdapter` is shared and driven by `meta/info.json`.
+**Adding B needed zero adapter code** — one `sources.yaml` entry, one `embodiments.yaml` entry,
+one fixture (M3).
 
-50 Hz · 50 episodes · ~20000 frames · `action`/`observation.state` both `float32[14]`, named
-`left_waist … left_gripper, right_waist … right_gripper`.
+50 Hz · 50 episodes · 25000 frames (exactly 500 rows each) · `action`/`observation.state` both
+`float32[14]`, named `left_waist … left_gripper, right_waist … right_gripper`.
 
 Row: `action` = target joint angles (rad) + gripper opening; `observation.state` = measured joint
 angles (rad) + gripper opening.
@@ -128,15 +130,25 @@ angles (rad) + gripper opening.
 **Traps**
 
 - **Two units in one vector**: 12 joints in `rad` (`metric_convertible=true`), 2 grippers
-  normalized (`metric_convertible=false`).
+  normalized (`metric_convertible=false`). Spec-level space is therefore `mixed`, not
+  `joint_position` — it is _derived_ from the channels, never declared.
 - **`arm_id` is mandatory.** `left_*` / `right_*` must become `arm_id="left"/"right"`, or dual-arm
   data cannot be split or aligned with single-arm data.
-- **Two grippers**, potentially with different conventions and inverse parameters — which is why
-  `gripper` is a channel-level field, not a spec-level one.
+- **The gripper direction is unverifiable, so do not invent one.** Measured over 7,500 rows the
+  values overflow `[0, 1]` in both directions (`left` reaches 1.162, `right` dips to −0.046), and
+  open-vs-closed is stated nowhere. Recorded as `convention:
+normalized_unverified_direction` with an identity inverse and **no `min`/`max`** (ADR 008).
+  Never renormalize at ingestion.
+- **B's clock is synthesized too.** `timestamp` is bit-identical to `float32(frame_index / fps)`
+  at 50 Hz, so `timestamp_source="synthesized@50Hz"` and `TS_MONOTONIC` is `SKIPPED` — measured
+  in M3, not inherited from A (ADR 008).
 - action and state are the **same space, target vs measured** → the `STATE_ACTION_ECHO` false
-  positive lives here. `is_command` is the distinguishing field.
-- Camera count is **data-driven**: sim usually has only `top`; real ALOHA commonly has 4
-  (top / low / left_wrist / right_wrist). Never hardcode.
+  positive lives here. `is_command` is the distinguishing field, and the two channel lists are a
+  YAML anchor alias of one another so they cannot drift.
+- Camera count is **data-driven**: sim has only `observation.images.top`; real ALOHA commonly has
+  4 (top / low / left_wrist / right_wrist). Never hardcode.
+- The only unmodelled per-frame column is `next.done` → `raw.next.done`. There is no
+  `next.reward` and no `next.success`, so `success_adjudicator=NONE` and `success=None`.
 - 50 Hz vs A's 10 Hz: the same 8-second trajectory differs 5× in frame count. This is why export
   sampling cannot be proportional to frame count.
 
@@ -144,79 +156,107 @@ angles (rad) + gripper opening.
 
 ## Source C — OXE / RLDS `berkeley_autolab_ur5` (nested, no timestamps)
 
-`episode → steps` nesting. Per step:
+`episode → steps` nesting. Per step, as **measured** (`spikes/_out/probe_m3.txt`, `features.json`):
 
 ```python
-"observation": {"image": uint8[480,640,3], "hand_image": uint8[480,640,3], "state": float32[15]}
+"observation": {"image": uint8[480,640,3], "hand_image": uint8[480,640,3],
+                "image_with_depth": float32[480,640,1], "robot_state": float32[15],
+                "natural_language_instruction": string,
+                "natural_language_embedding": float32[512]}
 "action": {                                   # a dict, not a flat vector
    "world_vector":              float32[3],   # ee position delta (m), magnitude ~1e-2
-   "rotation_delta":            float32[3],   # ee orientation delta (rad)
-   "gripper_closedness_action": float32[1],   # maybe -1=open / +1=closed
-   "terminate_episode":         float32[3],
+   "rotation_delta":            float32[3],   # ee orientation delta (rad), "roll, pitch, yaw"
+   "gripper_closedness_action": float32,      # SCALAR. +1 close / -1 open / 0 no change
+   "terminate_episode":         float32,      # SCALAR, not [3] — ADR 003
 }
-"reward", "discount", "is_first", "is_last", "is_terminal",
-"language_instruction", "language_embedding": float32[512]
+"reward", "is_first", "is_last", "is_terminal"
 ```
 
-**Flattening is our decision and becomes a public contract** — `dim=10, physical_dim=7,
-space="mixed"`:
+**Flattening is our decision and becomes a public contract** — `dim=8, physical_dim=7,
+space="mixed"` (the flattening order is `ACTION_KEYS` in `infrastructure/sources/rlds_adapter.py`):
 
-| idx | name                        | role         | channel.space          | is_delta  | frame  | unit       | is_physical |
-| --- | --------------------------- | ------------ | ---------------------- | --------- | ------ | ---------- | ----------- |
-| 0-2 | `ee.dx/dy/dz`               | end_effector | `ee_translation_delta` | **true**  | `base` | m          | true        |
-| 3-5 | `ee.drx/dry/drz`            | end_effector | `ee_rotation_delta`    | **true**  | `base` | rad        | true        |
-| 6   | `gripper`                   | gripper      | `gripper`              | **false** | None   | normalized | true        |
-| 7-9 | `flag.terminate_episode[i]` | control_flag | `flag`                 | false     | None   | None       | **false**   |
+| idx | name                     | role         | channel.space          | is_delta | frame  | unit       | is_physical |
+| --- | ------------------------ | ------------ | ---------------------- | -------- | ------ | ---------- | ----------- |
+| 0-2 | `ee.dx/dy/dz`            | end_effector | `ee_translation_delta` | **true** | `base` | m          | true        |
+| 3-5 | `ee.drx/dry/drz`         | end_effector | `ee_rotation_delta`    | **true** | `base` | rad        | true        |
+| 6   | `gripper`                | gripper      | `gripper`              | **true** | None   | normalized | true        |
+| 7   | `flag.terminate_episode` | control_flag | `flag`                 | false    | None   | None       | **false**   |
 
 **Not one column of that table is homogeneous.** This is the entire argument for channel-level
 semantics.
 
 **Traps**
 
-- **Deltas and absolutes in one vector**: poses are deltas, the gripper is an absolute command.
-  Bucket by `is_delta` at channel granularity before any statistic.
-- **`rotation_delta`'s representation is declared nowhere.** Axis-angle / rotvec / Euler XYZ /
-  Euler ZYX are all 3 radians. Check the dataset card in M0; failing that write
-  `rotation.repr="unknown"` — the field must exist.
-- **No timestamps.** Only an implied control rate (~5 Hz). Synthesize:
-  `provenance.timestamp_source="synthesized@5Hz"`, and all timestamp rules become `SKIPPED`.
-- **Trailing padding step.** RLDS's last step often carries a zero/placeholder action; counting it
-  pollutes `ACTION_JERK` and static detection. Trim by `is_last`, record in `raw_extra`.
+- **Deltas and absolutes in one vector**: the poses are deltas, and so is the gripper — it is a
+  ternary _change_ command, not an opening. Bucket by `is_delta` at channel granularity before
+  any statistic.
+- **`rotation_delta`'s composition order is declared nowhere.** The axes are named ("roll, pitch,
+  yaw") but the order is not, so `rotation.repr="euler_rpy"` with `compose="unknown"`. Do not
+  reach for `euler_xyz` — it asserts an order nobody stated (ADR 009).
+- **No timestamps.** `control_hz` is **required** in `config/sources.yaml`; the adapter raises
+  rather than defaulting. `provenance.timestamp_source="synthesized@5Hz"`, and all timestamp
+  rules become `SKIPPED`.
+- **Trailing padding steps, plural.** `is_last`/`is_terminal` are set on the final **two** steps,
+  both with an all-zero pose action. But zero actions also occur _mid_-episode, so trim only the
+  trailing run where `is_last` is truthy **and** `world_vector` and `rotation_delta` are both
+  zero. Record the count, the trimmed rewards and the terminal reward in `raw_extra`, plus a
+  `trim_trailing_steps` entry in `provenance.transforms` (ADR 009).
 - **`terminate_episode` is a control flag, not a physical quantity.** `is_physical=False`,
   excluded from `ACTION_RANGE`/`ACTION_JERK`/`STATIC_EPISODE`. Here the ending is decided by the
   **policy**: `termination_source="policy_flag"`, `success_adjudicator="policy"`, `success=None`
-  (meaning "unknown", unlike D).
+  (meaning "unknown", unlike D). The terminal reward of 1.0 is what the environment paid, not a
+  verdict — it goes to `raw_extra`, never to `boundary.success`.
 - **Read `is_last` and `is_terminal` separately.** `is_last & ~is_terminal` ⟹ truncated.
-- **`observation.state[15]` semantics are undocumented and inconsistent across sub-datasets.**
-  Write `StateSpec.space="unknown"`, channel `role="unknown"`, preserve verbatim in `raw_extra`.
-  Do not invent roles.
-- **Per-step extras go to `raw.` columns**, not `raw_extra`: `discount`, `is_first/is_last/
-is_terminal`, `language_instruction`. `language_instruction` is **lossless**;
-  `language_embedding` (512-D) is **droppable** — recomputable from text and bound to an encoder
-  version.
+- **`observation.robot_state[15]` semantics are undocumented** — the description literally defers
+  to a web page. Write `StateSpec.space="unknown"`, channel `role="unknown"`, `is_physical=True`
+  (they _are_ measurements; we just cannot say of what — and `False` would make the spec space
+  compute to `none` instead of `unknown`). Do not invent roles.
+- **Per-step extras go to `raw.` columns**, not `raw_extra`: `reward`, `is_first/is_last/
+is_terminal`. `natural_language_instruction` is **lossless** but cannot be a frame column —
+  `FrameTable.canonical_digest` casts every column to `<f8`, so it becomes `EpisodeMeta.task`
+  plus a `raw_extra` copy. `natural_language_embedding` (512-D) is **droppable** — recomputable
+  from text and bound to an encoder version — via `drop_channels` in config, recorded in
+  `provenance.transforms`.
 - **Cameras are inline frames, not mp4**, and one of them is a **wrist** camera:
 
 ```json
 "cameras": [
-  {"name": "image",      "mount": "static", "resolution": [480, 640], "encoding": "inline_frames"},
-  {"name": "hand_image", "mount": "wrist",  "resolution": [480, 640], "encoding": "inline_frames"}
+  {"name": "image",            "mount": "static", "resolution": [480, 640], "encoding": "inline_frames"},
+  {"name": "hand_image",       "mount": "wrist",  "resolution": [480, 640], "encoding": "inline_frames"},
+  {"name": "image_with_depth", "mount": "static", "resolution": [480, 640], "encoding": "inline_frames"}
 ]
 ```
 
-So `has_rgb=true, has_video=false`, `VIDEO_FRAME_MISMATCH` resolves to `SKIPPED`, and `--no-video`
-is a no-op for C. Violent frame-to-frame change is **normal** on `wrist`, anomalous on `static`.
+So `has_rgb=true, has_depth=true, has_video=false`, `VIDEO_FRAME_MISMATCH` resolves to `SKIPPED`,
+and `--no-video` is a no-op for C. Violent frame-to-frame change is **normal** on `wrist`,
+anomalous on `static`. `is_present` is **measured** from the staged record's bytes, not declared
+from `features.json` — the committed fixture strips the payloads and must report `false`.
 
 ### C's identity problem — this one lands directly on an acceptance criterion
 
-One TFRecord shard holds **many** episodes, and an episode's only identity is its index in the
-shard. Hashing the shard gives every episode in it the same hash; and when upstream re-shards,
-every index shifts and the second run treats the entire old corpus as new.
+One TFRecord shard holds **many** episodes, and a record's only handle is its position inside a
+shard file whose name encodes the _current_ shard count. Hashing the shard gives every episode in
+it the same hash; and an identity built from the shard makes a re-shard look like new data.
+
+So identity is **layout-independent** — the episode's cumulative index within the split, derived
+from `dataset_info.json`'s `shardLengths`:
 
 ```
-upstream_id  = f"{split}/{shard_basename}#{index_in_shard}"
+upstream_id  = f"{split}#{global_index:06d}"          # NOT f"{split}/{shard}#{i}"
 content_hash = sha256(canonical bytes of the NORMALIZED episode)   # not the shard file
-sources.shard_layout_revision                                       # re-sharding = stale, not new
+adapter_version = f"rlds@1.0.0+layout={shard_layout_revision}"     # re-sharding = stale, not new
 ```
+
+Two things to keep straight:
+
+- **No `/` in `upstream_id`.** `IngestEpisodes._staging_dir` uses it verbatim, so a slash would
+  silently invent a directory level.
+- **The layout is a staleness key, never an identity key.** It rides in `adapter_version`, so
+  declaring a new `shard_layout_revision` in `config/sources.yaml` yields
+  `Staleness.REDO_NORMALIZE` — every episode re-normalized and re-hashed, none re-discovered.
+  `list_episodes` records both the declared and the measured layout in `raw_extra`, and
+  deliberately does **not** raise on a mismatch: a re-shard that failed the whole run would make
+  the corrective config edit unreachable.
 
 **Canonical bytes are not parquet file bytes.** Compressor, row-group layout, and writer version
 all change file bytes for identical content. Definition: in the spec's declared channel order,

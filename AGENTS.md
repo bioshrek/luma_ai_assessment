@@ -21,13 +21,18 @@ fixed-width vector is wrong and is explicitly rejected by the design.
 
 ## Current State
 
-**M0–M2 are complete. M3 is next: breadth — sources B (aloha) and C (RLDS/OXE).**
+**M0–M3 are complete. M4 is next: depth — source D (EPIC-KITCHENS-100).**
 
-`rdp run --source pusht && rdp export && rdp report` works end to end on real data, for source A
-only. **Both acceptance scenarios are green and machine-checked**: a crash at any of the eight
-checkpoints resumes to a byte-identical result, and a re-run on unchanged upstream writes
-nothing at all. `scripts/demo_crash_resume.sh` reproduces the reviewer's scenario with a real
-`kill -9`.
+`rdp run && rdp export && rdp report` works end to end on real data for **three** sources —
+`pusht`, `aloha_sim_insertion` and `berkeley_ur5`. **Both acceptance scenarios are green and
+machine-checked**: a crash at any of the eight checkpoints resumes to a byte-identical result,
+and a re-run on unchanged upstream writes nothing at all. `scripts/demo_crash_resume.sh`
+reproduces the reviewer's scenario with a real `kill -9`.
+
+M3 proved the adapter seam. Adding **B cost no Python at all** (one `sources.yaml` entry, one
+`embodiments.yaml` entry, one fixture, sharing `LeRobotAdapter` with A); adding **C** cost one
+adapter, a 130-line stdlib TFRecord reader and one streaming method on the fetcher — with
+`application/` untouched and exactly one line added to `domain/`.
 
 ```
 docs/technical_design.md      # the design authority — domain model, schema, QC, layering
@@ -36,6 +41,8 @@ docs/adr/000..004             # M0's decisions: source selection, no-TF RLDS rea
                               #   LeRobot v3.0 + lost termination, C's 8-D action, EPIC fps/IMU
 docs/adr/005..006             # M1's: pusht's synthesized clock, catalog schema + store layout
 docs/adr/007                  # M2's: resume, leases, and the honest crash criteria
+docs/adr/008..009             # M3's: B's channel-level units + unverifiable gripper direction;
+                              #   C's re-shard-proof identity, required clock, padding trimming
 docs/assessment.md            # original requirements (Chinese)
 docs/assessment_for_ai.md     # requirements, agent-facing
 docs/ai_chat_sessions/*.json  # raw AI transcripts — archival, do not edit or translate
@@ -43,14 +50,15 @@ pyproject.toml                # uv project; `spike` dependency group is M0-only 
 config/{sources,embodiments,qc}.yaml   # sources, per-embodiment channel semantics, ruleset
 spikes/probe_*.py             # throwaway probes; _out/*.txt is their captured output
 src/rdp/{domain,application,infrastructure,interfaces}/
-tests/{unit,integration,acceptance,fakes,fixtures}/     # 114 tests, ~15 s; domain coverage 90%+
-scripts/make_fixtures.py      # regenerates the 39 KB committed pusht mini fixture
+tests/{unit,integration,acceptance,fakes,fixtures}/     # 133 tests, ~20 s; domain coverage 97%
+scripts/make_fixtures.py      # regenerates the three mini fixtures (~256 KB total)
 scripts/demo_crash_resume.sh  # real kill -9 against a throwaway store under .demo/
 ```
 
-**Read `docs/adr/000`–`007` before touching an adapter or the resume logic.** M0 measured four
-things the design had guessed wrong, M1 a fifth, and M2 corrected one exit criterion that was
-physically unachievable as written; all are reconciled in `docs/technical_design.md`.
+**Read `docs/adr/000`–`009` before touching an adapter or the resume logic.** M0 measured four
+things the design had guessed wrong, M1 a fifth, M2 corrected one exit criterion that was
+physically unachievable as written, and M3 corrected C's episode identity, its padding rule and
+the rotation representation; all are reconciled in `docs/technical_design.md`.
 
 Only what a milestone needs gets built; do not scaffold ahead of the plan.
 
