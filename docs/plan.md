@@ -98,9 +98,9 @@
 | `cam_t[3]` | EPIC-Fields | `head` | `camera_translation_abs`  | `None`  | **False**（SfM 尺度任意） | `estimated` |
 | `cam_q[4]` | EPIC-Fields | `head` | `camera_rotation_abs`     | `None`  | False                     | `estimated` |
 
-`cam_q` 的 `rotation = {"repr": "quat_wxyz", "compose": None}`（绝对旋转不存在复合顺序问题），`frame = "world"`。IMU 的单位约定（rad/s vs deg/s）**M0 必须实测确认，不得照抄文档**。
+`cam_q` 的 `rotation = {"repr": "quat_wxyz", "compose": None}`（绝对旋转不存在复合顺序问题），`frame = "world"`。IMU 的单位约定（rad/s vs deg/s）**M0 必须实测确认，不得照抄文档**。还要注意 IMU（~200 Hz）与视频帧（50/59.94 fps）**不同时钟**，不得重采样进帧表——IMU 作为独立信号流落 `streams/imu.parquet`，规则见 2.2h。
 
-这一组把此前各源分别暴露的洞**第一次叠在同一个向量里**：C 只逼出了 `Channel.rotation`，A 只逼出了 `metric_convertible=False`（而且只是 2D 像素）。D 是**一个完整 6-DoF 位姿同时不可换算**——SfM 重建没有绝对尺度，这不是"我们没查到单位"，是数学上就不存在尺度。硬填 `unit="m"` 会让下游把重建坐标当米用。
+这一组把此前各源分别暴露的洞**第一次叠进同一条 episode 里**：C 只逼出了 `Channel.rotation`，A 只逼出了 `metric_convertible=False`（而且只是 2D 像素）。D 是**一个完整 6-DoF 位姿同时不可换算**——SfM 重建没有绝对尺度，这不是"我们没查到单位"，是数学上就不存在尺度。硬填 `unit="m"` 会让下游把重建坐标当米用。
 
 **4. 新增 `Provenance.signal_origin`（见 2.2f）：`measured` / `estimated` / `interpolated` / `annotated` / `synthesized`。** 这不是学究气，它直接改变质检语义：
 
@@ -172,10 +172,13 @@ SignalSpec = {                         # action 与 state 共用同一个值对�
   "physical_dim": int,                 # 其中物理通道数（统计/阈值只用这些）
   "channels": [ Channel, ... ],
   "is_delta": bool,                    # **派生汇总**：any(c.is_delta for c in 物理通道)
+  "clock": "frame" | "own_timeline",   # 见 2.2h：own_timeline 的信号不进 frames.parquet
 }
 
 Channel = {
   "name": "left.gripper",
+  "group": str | None,                 # 逻辑向量组（"cam_q" / "ee_delta"…）：跨通道不变量
+                                       # （四元数单位模、xyz 同坐标系）的落点；独立标量为 None
   "role": "joint" | "end_effector" | "gripper" | "base" | "head"
           | "control_flag" | "unknown",
   "space": "joint_position" | "ee_translation_abs" | "ee_translation_delta"
@@ -311,6 +314,8 @@ Provenance = {
   "transforms": [ ... ],               # 转码/降采样等有损变换的记录
   "mirrors": [ ... ],                  # 同一数据的其他副本及其差异（D 的本地重编码版）
   "upstream_revision": str,
+  "adapter_version": str,              # 产出本条的 adapter 代码版本；与 episode.json 顶层的
+                                       # schema_version 一起构成过期谓词（见第 5 节、8.7）
 }
 ```
 
@@ -320,11 +325,13 @@ Provenance = {
 
 **g. episode 边界：不只记录「在哪结束」，还要记录「谁判定的结束」。**
 
-「这条轨迹为什么在这里结束」在四个来源里是四个完全不同的机制，而同一个概念在 schema 里的**结构位置也不同**：A/B 的结束信号是**环境产出的标签**（`next.done`），C 的结束信号是**策略输出的动作通道**（`action.terminate_episode`），D 的边界是**标注员事后画的区间**。不显式建模就会出三类错：跨源统计把控制标志当物理量、离线 RL 的 bootstrap 算错、导出截断制造出上游不存在的假边界。
+「这条轨迹为什么在这里结束」在四个来源里是四个完全不同的机制，而同一个概念在 schema 里的**结构位置也不同**：A/B 的结束信号是**环境产出的标签**（`next.done`），C 的结束信号是**策略输出的动作通道**（`action.terminate_episode`），D 的边界是**标注员事后画的区间**。不显式建模就会出两类错：跨源统计把控制标志当物理量、离线 RL 的 bootstrap 算错。（初稿还有第三类——导出截断制造上游不存在的假边界——已随「导出禁止截断」的决策整类消除，见第 6 节。）
 
 ```python
 EpisodeBoundary = {
-  "termination_source": "env_rule" | "policy_flag" | "operator" | "annotator" | "exporter",
+  "termination_source": "env_rule" | "policy_flag" | "operator" | "annotator",
+                             # 初稿还有 "exporter"，随禁止导出截断移除（第 6 节）：
+                             # enum 里不留没有生产者的值
   "end_reason": "success" | "truncated" | "operator_stop" | "annotation_bound" | "unknown",
   "is_truncated": bool,      # 被步数上限截断：末状态并非终止态
   "success": bool | None,    # None 表示「不知道」，不是 False
@@ -338,6 +345,17 @@ EpisodeBoundary = {
 **`success_adjudicator` 是相对上一版新增的，由 D 逼出来**：C 的 `success=None` 与 D 的 `success=None` 在 schema 里长得一样，语义却相反——C 是「评判机制存在，但这一条未知」（可以补标），D 是「体系里根本没有评判者」（补不了）。缺了这个字段，下游会把 D 当成「标注不全的数据集」而去尝试补标，或者在统计「成功率」时把 D 的分母算进去。
 
 **`terminated` 与 `truncated` 必须分开存，这是最容易被静默写错的一处**：`is_terminal=True` 表示轨迹真正终止，价值自举必须截断（$V(s_T)=0$）；`is_last=True, is_terminal=False` 表示只是被步数上限切断，末状态仍是普通状态，自举必须继续（$V(s_T) \neq 0$）。压成一个 `done` 布尔会让所有基于该导出的离线 RL 训练**无声地错**。pusht 在 gym 层同样区分 `terminated` / `truncated`，但 LeRobot 的导出可能只保留了 `next.done`——M0 spike 要确认，若确已丢失则登记进已知局限（第 11 节）。
+
+**h. 多时钟信号：`frames.parquet` 只承载帧时钟，其余信号流各带自己的时间轴。**
+
+此前整个 schema 有一条从未写下的隐含假设：**一行 = 一帧，所有信号共享同一个时钟**。A/B/C 恰好都是单时钟来源，所以它和 `level` 一样从未被检验；D 直接击穿它——IMU ~200 Hz、相机位姿跟视频帧率（50/59.94 fps）、事件标注 ~0.3 Hz，三种时钟在同一条 episode 里。把 IMU 压进帧表只有两条路：重采样（违反 2.2c 的「入库不重采样」）或行数爆炸，两条都不可接受。因此：
+
+- `frames.parquet` 只存与**帧时钟**对齐的信号（D 的相机位姿按官方 fps 派生帧号后天然对齐）；
+- 非帧时钟信号落 `normalized/.../streams/<stream_id>.parquet`，自带 `t` 列（episode 内从 0 起的秒），每个 stream 一个独立的 `SignalSpec`（存 `episode.json` 的 `stream_specs`）；
+- `SignalSpec` 增加 `clock: "frame" | "own_timeline"`，硬约束见 8.4 不变量 17；
+- 需要帧对齐视图时在**导出期**做（最近邻 / 窗口聚合，按 role 决定插值方式），与 2.2c 同一原则：入库层保真，有损推迟到导出层并记录参数。
+
+D 的 state 因此拆成两份：相机位姿（`clock="frame"`，7 维，进帧表）与 IMU（`clock="own_timeline"`，6 维，进 `streams/imu.parquet`）；`Capabilities.has_imu` 语义不变。附录 A.D 的示例已按此更新。
 
 ### 2.3 统一读取
 
@@ -363,13 +381,16 @@ class SourceAdapter(Protocol):
 store/
   raw/<source_id>/<episode_uid>/…          # staging，可清理
   normalized/<source_id>/<episode_uid>/
-      frames.parquet                        # 逐帧低维信号
-      episode.json                          # 元信息 + ActionSpec + capabilities
+      frames.parquet                        # 逐帧低维信号（帧时钟，见 2.2h）
+      streams/<stream_id>.parquet           # 非帧时钟信号流（如 D 的 IMU），自带 t 列
+      episode.json                          # 元信息 + specs + capabilities + schema_version
   catalog.sqlite                            # 目录 + 状态机 + 质检结果 + 运行报告
   exports/subset_<ts>.jsonl
 ```
 
 原则：**大数据走文件系统，元数据与状态走 SQLite**。SQLite 只存指针和统计，保证库文件小、查询快、备份容易。
+
+**列名契约**：附录 A.C.1 说「通道展开顺序是对外契约」，契约必须落到**列名**而不是列位置。`frames.parquet` 的列名固定为 `t`（秒，episode 内从 0 起）、`action.<channel.name>`、`state.<channel.name>`、`raw.<上游字段名>`；物理列序 = spec 里 `channels` 的声明序，但消费者一律按名取列，位置索引不属于契约。stream 文件同理（`t` + `<channel.name>`）。
 
 ### 2.5 为什么要落一层 `normalized/`，而不是"原样存源 + 读时用 adapter 转"
 
@@ -440,8 +461,9 @@ episodes(
   source_id, upstream_id, content_hash,
   embodiment, action_space, action_dim, n_frames,
   fps_nominal, fps_effective, duration_s,
-  capabilities_json, action_spec_json, state_spec_json, camera_json, raw_extra_json, boundary_json,
+  capabilities_json, action_spec_json, state_spec_json, stream_specs_json, camera_json, raw_extra_json, boundary_json,
   frames_path, status,       -- 状态机，见下
+  schema_version, adapter_version,  -- 过期谓词的组成部分（见第 5 节、8.7）
   qc_verdict,                -- PASS | FAIL | REVIEW | PENDING
   first_seen_run, last_update_run, updated_at,
   UNIQUE(source_id, upstream_id)
@@ -450,6 +472,7 @@ episodes(
 episode_state(episode_uid PK, stage, attempt, last_error, lease_owner, lease_expires_at, updated_at)
 
 qc_results(id PK, episode_uid, rule_id, verdict, metrics_json, reason, run_id,
+           ruleset_version,   -- 规则代码 + qc.yaml 阈值的联合摘要
            UNIQUE(episode_uid, rule_id, run_id))
 
 runs(run_id PK, started_at, finished_at, status, args_json, stats_json)
@@ -482,8 +505,18 @@ sources 表增列 shard_layout_revision                     # 重新分片可被
 
 代价要写进文档：C 的 `content_hash` 只有归一化之后才算得出来，因此“靠 hash 提前跳过下载”对 C 不成立——只能靠 `upstream_id` 跳过，`content_hash` 用于事后校验与 stale 检测。
 
+**「规范字节」必须自己定义，parquet 文件字节不合格**：压缩器、row group 划分、写入器版本都会改变文件字节，同一逻辑内容会得到不同 hash。定义为：按 spec 声明的通道序，把各列数值转成 float64 小端原始字节依次拼接，前置一段按 key 排序的元信息 JSON（列名、dtype、行数），对整体取 sha256——哈希的是**逻辑内容**，不是容器。
+
 - 新一轮 `list_episodes` 后做差集：库里 `COMMITTED` 且 hash 未变 → 跳过（这就是"识别无新增数据"）。
 - hash 变了 → 标记 `stale`，重跑并写新版本（`episodes` 保留旧行的 supersede 标记，不物理删除）。
+
+**「过期」是一个统一谓词，不只看上游**：
+
+```
+stale ⟺ 库中记录的 (content_hash, schema_version, adapter_version, ruleset_version) ≠ 当前元组
+```
+
+「上游改了数据」与「我们改了 schema / adapter / 阈值」共用同一条检测与重跑路径：命中即标 stale，幂等地定向重跑对应阶段（schema / adapter 变更从 normalize 起重跑；仅 ruleset 变更只重跑 QC）。schema 迭代因此**不需要一次性迁移脚本**——它就是又一轮增量入库（见 8.7）。
 
 **崩溃安全的三条铁律**：
 
@@ -503,18 +536,20 @@ sources 表增列 shard_layout_revision                     # 重新分片可被
 
 ## 6. 训练子集导出
 
-CLI：`rdp export --budget 50000 --strategy balanced --out exports/subset.jsonl`
+CLI：`rdp export --budget 50000 --strategy balanced [--embodiment <id>] --out exports/subset.jsonl`
+
+默认是跨本体的混合子集（题目问的就是「预算怎么分给不同来源和本体」，且跨本体训练是真实下游——但它们在**模型侧**消化异构，前提正是本 schema 保留了各本体原生语义）；单本体训练用 `--embodiment` 过滤，把过滤从下游前移到导出层，不浪费预算。
 
 **采样策略（分层 + 平方根平滑 + 质量优先 + 组内多样性）**：
 
 1. 只从 `qc_verdict == PASS` 的 episode 里选（`REVIEW` 可用 `--include-review` 放进来，默认不放）。
 2. 第一层按**本体**分配，而不是按来源——训练关心的是本体/动作空间的覆盖，来源只是存储事实。
-3. 组内配额用**平方根平滑**：$w_i = \sqrt{N_i} \big/ \sum_j \sqrt{N_j}$，再对每组施加上下限 $[\text{floor}, \text{cap}]$（如单组不超过总预算 40%、不少于 5%）。理由：纯按帧数比例分配会让 ALOHA 50Hz 的数据淹没 10Hz 的 pusht（帧数差 5 倍但信息量并不差 5 倍）；纯均分又浪费大源的多样性；sqrt 是行业里常用的折中（多语言 NLP 语料采样同款做法）。
-4. 组内排序：先按 QC 质量分（无 REVIEW 命中 > 有 REVIEW 命中），再按**任务标签去重**做轮转（round-robin over task），避免预算被同一个任务吃满。
-5. 帧预算按 episode **整段**给（不切碎轨迹），最后一个 episode 允许截断到帧范围，并在输出里写明 `frame_start/frame_end`。**截断会制造一个上游不存在的 episode 边界**（最坏的情况：刚好切掉带 `success=True` 的末帧，一条成功示教静默变成无标签数据），因此导出行必须写 `boundary.termination_source="exporter"` 与 `is_truncated=true`，不得沿用原 episode 的边界声明。
+3. **组间**配额用**平方根平滑**：$w_i = \sqrt{N_i} \big/ \sum_j \sqrt{N_j}$（$N_i$ = 第 $i$ 个本体组的合格帧数），再对每组施加上下限 $[\text{floor}, \text{cap}]$（如单组不超过总预算 40%、不少于 5%）。理由：纯按帧数比例分配会让 ALOHA 50Hz 的数据淹没 10Hz 的 pusht（帧数差 5 倍但信息量并不差 5 倍）；纯均分又浪费大源的多样性；sqrt 是行业里常用的折中（多语言 NLP 语料采样同款做法）。
+4. **组内**选 episode：先按 QC 质量分（无 REVIEW 命中 > 有 REVIEW 命中），再按 `(source, task)` 做轮转去重，避免预算被同一个任务吃满。注意本轮四源恰好 source ↔ embodiment 一一对应，按 source 轮转是退化的恒等操作；它只在多个 source 同本体（如两个 UR5 数据集）时显形——这是「按本体分层而非按来源」的配套细节，否则同本体的配额会被单一 source 吃满。
+5. 帧预算是**上限，不是目标**：只装整条 episode，装不下下一条就停，**不截断、也不提供截断选项**。算账：不截断的缺口最多一条 episode 的长度（对 5 万帧预算 < 2%，训练无感）；截断的代价是制造上游不存在的假边界（最坏情形：切掉带 `success=True` 的末帧，一条成功示教静默变成无标签数据），且被切的恰是信息密度最高的尾段（抓取/放置的完成时刻）——为省 <2% 预算引入一整套假边界语义与下游特判，交换比不成立。报告与 `exports` 表记录 `budget_used / budget`；预算小于最短合格 episode 时导出报错退出，而不是退化为截断。
 6. 固定 `--seed`，导出可复现；`exports` 表记录策略与统计。
 
-输出行（JSONL）字段：`source_id, embodiment, action_space, action_dim, physical_dim, episode_uid, frame_start, frame_end, n_frames, fps, capabilities, boundary, task, frames_path, key_stats(mean/std/min/max per physical channel), qc_verdict, qc_rules_hit`。
+输出行（JSONL）字段：`source_id, embodiment, action_space, action_dim, physical_dim, episode_uid, frame_start, frame_end, n_frames, fps, capabilities, boundary, task, frames_path, key_stats(mean/std/min/max per physical channel), qc_verdict, qc_rules_hit`。`frame_start/frame_end` 恒为整条 `[0, n_frames)`，保留字段是为了让消费方无需另查元数据即可定位帧区间。
 
 ---
 
@@ -659,7 +694,7 @@ class FaultInjector(Protocol):                          # 生产实现是 no-op
 2. `CanonicalEpisode` 一旦构造完成即不可变；`SignalSpec.dim == len(channels) == 对应列宽`（action 与 state 各自校验），构造时校验，违反直接抛领域异常。
 3. `SignalSpec.level == "absent"` ⟺ `Capabilities.has_* == False`；`level == "episode_label"` ⟹ `dim == 0` 且 `frames.parquet` 里**不得存在**对应列（不是全 NULL 的列，是没有这一列）；`level` 为逐帧类型且某帧无值时只能写 NULL（**禁止 0 填充**，D 的未注册帧位姿适用此条）。action 与 state 各自校验。
 4. QCRule 的 `required_capabilities` 不满足 ⟹ 结论只能是 `SKIPPED`，领域层强制，规则实现无法绕过。
-5. `SubsetPlan` 总帧数 ≤ 预算，且每个条目的 `frame_range` 必须落在该 episode 的实际帧数内。
+5. `SubsetPlan` 总帧数 ≤ 预算，且每个条目一律是**整条** episode（`frame_range == [0, n_frames)`，导出不截断，见第 6 节）。
 6. `SignalSpec.physical_dim == len([c for c in channels if c.is_physical])`；且任何跨通道统计（限位/jerk/行程）只能在物理通道子集上计算——由领域层的 `physical_view()` 统一提供，规则拿不到完整向量，从机制上无法误用。
 7. `EpisodeBoundary.is_truncated == True` ⇒ `end_reason != "success"`；`success` 为 `None` 时禁止任何下游把它当 `False` 读（类型层强制）。
 8. `role == "gripper"` ⟹ `channel.gripper` 非空（必须带原始约定与反变换参数）；`role != "gripper"` ⟹ `channel.gripper is None`。否则 2.2b 的“归一化可逆”只是口号。
@@ -670,6 +705,8 @@ class FaultInjector(Protocol):                          # 生产实现是 no-op
 13. `Channel.origin != "measured"` ⟹ 数值类规则在该通道上的 severity 自动降一级（FAIL → REVIEW），且 `Verdict.reason` 必须包含降级依据。降级由领域层施加，规则实现无法绕过——同不变量 4。
 14. `EpisodeBoundary.success_adjudicator == "none"` ⟹ `success is None`；反之不成立（C 是 `policy` + `None`）。任何「成功率」聚合必须排除 `success_adjudicator == "none"` 的 episode，而不是把它们算进分母。
 15. 派生量必须携带其所依赖的参数：`frame_index_source` 必须形如 `derived_from_seconds@<fps>`，只写 `derived` 不合法——否则无从判断副本更换后帧号是否过期。
+16. 同一 `Channel.group` 内的通道 `space` / `frame` / `unit` / `origin` 必须一致；组级约束（如 `quat_wxyz` 四通道齐全且模长可归一）在组上校验一次，不重复挂在每个标量通道上。
+17. `SignalSpec.clock == "own_timeline"` ⟹ 该 spec 的通道不得出现在 `frames.parquet`，对应 stream 文件必须自带单调的 `t` 列；`clock == "frame"` ⟹ 列的行数恒等于 `n_frames`。
 
 这些不变量全部有对应的单元测试，先写测试再写实现。
 
@@ -715,9 +752,34 @@ class FaultInjector(Protocol):                          # 生产实现是 no-op
 
 技术栈：Python 3.11、pydantic v2、numpy、pyarrow、typer、rich、pytest（+ `pytest-parametrize`）、sqlite3（标准库）。
 
+### 8.7 Schema 演化流程（安全迭代的机制，不靠第一次就设计对）
+
+schema 不可能一次设计对——2.2a 里 B/C/D 各自逼出的三轮修正已经证明了这一点。安全迭代的来源是**改动便宜**，不是**预先万能**。四个机制：
+
+**① `raw/` 权威 + `normalized/` 派生 ⟹ schema 迭代 = 定向重归一化，不是数据迁移。** 2.5 已确立 `normalized/` 可丢弃可重建；配合第 5 节的统一过期谓词，改版的执行路径与日常增量入库是**同一条路径**：bump `schema_version` → catalog 批量命中 stale → 现有幂等状态机定向重跑 normalize / QC。不存在「一次性迁移脚本」这个物种。
+
+**② 版本政策：tolerant reader + 增改分级。**
+
+- 加可空/可选字段 = **minor**：老 `episode.json` 直接可读（读方忽略未知字段、缺省补默认），不触发重建；
+- 改名 / 删字段 / 改语义（如当初把 `is_delta` 从 spec 级下沉到通道级）= **major**：触发 ① 的定向重建；
+- SQLite 侧走 expand–migrate–contract：`PRAGMA user_version` + 编号迁移脚本（启动时应用），先加可空列、回填、最后才删；大 JSON 列（`*_json`）让 catalog 的多数演化天然是 additive 的。
+
+**③ DDD 已就位的三张安全网，用足：**
+
+- 值对象 + 校验构造器 = schema 的**单一执行点**：改 schema = 改一个 `domain/` 类 + 它的不变量测试，所有违反新 schema 的路径在构造期炸出，而不是散在 4 个 adapter 里各改一遍；
+- adapter 即防腐层（ACL），**「新源逼 schema」固化为流程**：spike 读原始数据 → 列出「现 schema 表达不了的事实」清单 → 每条要么进 `raw_extra` / `unknown`（不改版），要么立 ADR 改版走 ①。压力只在防腐层边界产生，不直接渗进 domain；
+- 限界上下文的窄接口限定爆炸半径：Quality 只看 `FrameTable + Spec + Capabilities`、Curation 只看 `Verdict`——这两个接口刻意保持最小、独立于 `SignalSpec` 内部演化：内部翻天，下游零改动。
+
+**④ 决策留痕：ADR + golden diff。**
+
+- `docs/adr/NNN-*.md`：每次 schema 改版记 context / decision / 被拒方案 / 是否触发重建（与 `docs/ai/rejected.md` 互补——后者记「拒绝了什么」，前者记「接受了什么、代价是什么」）；
+- M4 的特征化测试 golden fixtures 就是 schema 的**可执行快照**：改版时 golden diff 即 review 材料——评审的不是代码，是「pusht 第 2 列从 X 变成 Y」这类领域事实。
+
+**反面戒律**：不为「以后好改」而泛化 schema——EAV、generic key-value、无限 `extensions` 字段都是把校验推迟到运行时，schema 名存实亡。`unknown` / `raw_extra` 已经是逃生舱：暂时表达不了的事实先进逃生舱，攒够证据再经 ADR 升格为一等字段——D 的 `level` 正是这条路径的成功案例。
+
 ---
 
-## 8.7 里程碑（TDD 顺序：测试先行的步骤已标注）
+## 8.8 里程碑（TDD 顺序：测试先行的步骤已标注）
 
 每个里程碑对应若干次 commit，且与 AI 对话记录时间线对齐。
 
@@ -753,15 +815,116 @@ Commit 纪律：小步提交、message 说明"做了什么 + 为什么"，节奏
 
 ## 10. 架构扩展问题的回答思路（500 数据集 / 5 亿帧 / 按帧随机读）
 
-文档里要展开，这里先记论点：
+文档里要展开，这里把论点与选型记全。先算规模账再分层回答；每小节末尾点明「当前代码里对应的接缝」——扩展答案的可信度来自第 8 节的分层在第一天就把接缝留好了（10.7 汇总）。
 
-1. **元数据层**：SQLite 单写者会成为瓶颈 → 换 Postgres（或先分片 SQLite + 定期合并）；`episodes` 表 5 亿帧对应约百万级行，仍可控，真正的压力在 `qc_results` 与帧级索引。
-2. **帧级随机读**：不能按 episode 存 parquet 再全量读。改为**分片 + 全局帧索引**：帧数据按 `(embodiment, shard_id)` 存成固定大小的 chunk（parquet row group 对齐 / WebDataset tar / Lance-类列存），另建 `frame_index`（`global_frame_id → shard_id, row_offset`），训练侧走 mmap + row-group 级随机读；图像/视频走独立的 chunk 存储并预生成关键帧索引，避免随机 seek 解码。
-3. **调度层**：单进程 for-loop → 任务队列（每个 episode 是一个幂等 task），worker 水平扩展；租约（lease）+ 心跳解决 worker 崩溃；当前的 `lease_owner/lease_expires_at` 字段就是为此预留的。
-4. **存储层**：本地 FS → 对象存储（S3/OSS），staging 只作临时缓存；写路径改为"写对象 + 提交元数据"两阶段。
-5. **质检层**：从"入库时逐 episode 串行"改为"批量向量化 + 抽样 + 分层复检"，全量重跑 5 亿帧不现实，需要规则版本号 + 只对受影响分片重算。
-6. **可观测性**：run 报告 → 指标上报（Prometheus）+ 数据质量看板 + 告警。
-7. **不变的部分**：canonical schema、capability 声明、幂等键设计、阶段状态机——这正是这套设计的价值所在，规模变化只换执行引擎和存储介质。
+### 10.0 规模画像（先算账，再选型）
+
+| 量           | 本轮（4 源） | 500 数据集                       | 含义                                             |
+| ------------ | ------------ | -------------------------------- | ------------------------------------------------ |
+| episode 数   | ~200         | ~1.7M（按 ~300 帧/条估）         | `episodes` 仍是"小表"，Postgres 单实例可扛       |
+| 低维信号     | < 1 GB       | ~0.2–0.5 TB parquet              | 对象存储便宜；难点在**读模式**不在体量           |
+| 视频/图像    | 默认不取     | 数十–数百 TB                     | 成本主体，必须分层生命周期管理                   |
+| `qc_results` | ~2K 行       | ~10⁸ 行（1.7M × 10 规则 × 多轮） | 真正的大表：分区 + 归档                          |
+| 摄取形态     | 一次性批处理 | 持续流入 + 随时定向重算          | 从"跑一轮"变成**常驻服务**，可维护性成为一等需求 |
+
+### 10.1 元数据与目录层：SQLite → 托管 Postgres
+
+- 瓶颈不是行数是**写并发**：SQLite 单写者，几百个 worker 同时推进状态机会串行在一把锁上。换托管 Postgres（RDS / Aurora / 云 RDS）：多 AZ 主备、自动故障转移、PITR 备份、只读副本承接报表与看板查询。过渡态可先**分片 SQLite（按 source 分库）+ 定期合并**把迁移往后推——但跨源查询和全局幂等键会变难，Postgres 是更少后悔的选择。
+- `qc_results` 按 `run_id`（或按月）分区；旧分区归档为对象存储上的 parquet，报表侧用 DuckDB/Athena 直查归档，不占主库。
+- **帧级索引不进 Postgres**：`global_frame_id → (shard, row_offset)` 是 5 亿行的静态映射，属于数据文件的伴生索引（见 10.3）——拿 OLTP 引擎存它是站错了引擎。
+- 接缝：换 `EpisodeRepository` / `UnitOfWork` 实现；领域层从不写 SQL，事务边界语义不动。
+
+### 10.2 调度层：把状态机放到 Temporal（或同类 durable execution）上
+
+单进程 for-loop → 任务编排。选型与理由：
+
+- **首选 Temporal（自托管或 Temporal Cloud）**：它的核心抽象——durable execution、activity 自动重试、心跳、超时——与本设计的 `IngestionStage` 状态机**同构**：每个 episode 一个 workflow，`fetch / normalize / qc / commit` 各是一个 activity；崩溃恢复从「手写 recovery pass + 租约」升级为平台语义。现在的 `lease_owner / lease_expires_at / attempt` 字段就是 Temporal worker heartbeat / retry policy 的手工版——迁移是替换而不是新增概念。
+- 同类替代：已有 K8s 基础设施则 Argo Workflows；数据资产视角则 Dagster（asset + 分区物化的模型与「episode 是资产」很合拍）。Airflow 不适合 per-episode 粒度（百万级 DAG run 不是它的设计点）。
+- 三条纪律：(a) workflow payload 只传 `EpisodeUid` 与 URI，帧数据绝不过编排器（有 payload 上限，也本不该承载数据）；(b) **catalog 仍是数据状态的唯一真相**，Temporal 只拥有"执行"状态——workflow 历史可以清理，`episodes` 表不能错；(c) activity 语义是 at-least-once，幂等仍靠现有的 `(source_id, upstream_id, content_hash)` 键与原子写，不依赖编排器去重。
+- 毒丸 episode：attempt 达上限进 dead-letter（状态机的 `FAILED` 已建模），人工介入走 10.6 的看板，改判后以 Temporal signal 唤醒继续。
+- QC 执行形态同步升级：逐条串行 → 批量向量化 activity + **抽样 / 分层复检**（新 source 或新规则上线先全量，稳定后降为抽样，命中率异常再升回全量）；全量重跑 5 亿帧不现实，靠第 5 节的统一过期谓词（`ruleset_version`）只对受影响分片定向重算。
+- 接缝：application 层用例函数**原样**变成 activity；调度器本来就在 application 之外。
+
+### 10.3 训练侧 IO：按帧随机读是「格式 × 缓存」的联合问题
+
+「5 亿帧随机读」正打在对象存储最弱处（单 GET 毫秒级延迟 + 按请求计费 + 单前缀限速），必须两头解：
+
+**格式侧（减小每次读的放大）**
+
+- 帧数据按 `(embodiment, shard)` 重组为固定大小 chunk：Lance 类列存（原生 `take(row_ids)`）、或 parquet 严格对齐 row group、或 WebDataset tar；全局帧索引与数据一起发布、带版本号。训练侧读路径是 **mmap + row-group 级随机读**，而不是整文件反序列化。
+- 先跟训练侧把需求对齐清楚：多数训练要的是**充分打乱**而不是任意寻址——shard 级 shuffle + shard 内 buffer shuffle（WebDataset 模式）把随机 IO 变成顺序 IO，吞吐差一个量级以上；索引式 `take()` 只留给真任意寻址的场景（如重放某个 QC 命中的帧区间）。
+- 视频不做随机 seek 解码：预切 clip 或预抽帧成 chunk、关键帧索引先行；训练消费图像的话直接物化 JPEG chunk（存储换延迟，最常见的工程解）。
+
+**基础设施侧（把延迟藏起来）**
+
+- 训练节点本地 NVMe 缓存 + 分布式缓存/加速层（Alluxio / JuiceFS / Mountpoint-S3 / FSx for Lustre 挂 S3）：热子集常驻缓存，冷数据（`raw/`、被 supersede 的旧 normalized 版本）走生命周期策略转低频/归档存储。
+- **导出的训练子集本身就是热集合的定义**：`exports` 表 + 子集清单驱动缓存预热，训练开始前 prefetch 完成——策展层与 IO 层在这里闭环。
+- 吞吐按「每 GPU 每秒帧数 × 节点数」倒推容量；S3 单前缀有请求速率上限，shard 命名要打散前缀（云上随机读的日常坑）。
+- 接缝：换 `FrameStore` / `BlobStore` 实现；列名契约、canonical schema、导出采样逻辑（domain）零改动。
+
+### 10.4 云上可维护性与稳定性
+
+- **全部 IaC**（Terraform/Pulumi），环境可复制可销毁；优先托管服务（RDS、Temporal Cloud、对象存储），自运维面只留 worker 池。
+- worker 池用 spot/抢占式实例省成本：归一化与 QC 是无状态批处理，被抢占等价于 kill -9——**本设计的验收场景（幂等 + 租约 + 断点恢复）就是 spot 实例的日常**，这是单机时代的设计在云上的直接变现。
+- 发布与迁移：worker 蓝绿/滚动发布；生产 schema 迁移走 8.7 的 expand–migrate–contract（additive 先行、双写窗口、最后收缩）；adapter/ruleset 升级靠统一过期谓词定向重算，全程不停摄取。
+- 数据完整性：写路径沿用第 5 节铁律的对象存储版——「先写对象、后提交元数据」两阶段，S3 没有 rename，靠「同 key 覆盖是原子的 + catalog 提交才算存在」保证；现有 `content_hash` 对接 S3 ETag / S3 Inventory 做定期对账；备份演练（catalog 恢复到时间点 + 抽查 normalized 与索引一致性）例行化。
+- 监控与告警展开见 10.5。
+- 合规下沉为机器强制：许可字段（D 的 CC BY-NC）在 500 数据集规模下不能再靠文档提醒——导出层加硬校验，非商业数据不得混入商业用途子集。
+
+### 10.5 可观测性：把 run 报告长成指标体系，而不是另建一套
+
+单机设计里已经有三个可观测性原件，云上不是重做而是给它们接上导出器：
+
+| 单机原件                                          | 云上形态                                                                     | 接缝                                         |
+| ------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------- |
+| `runs` 表 + `rdp report`（纯 SQL 聚合）           | Prometheus 指标 + Grafana 看板                                               | `RunReporter` 端口加一个上报实现（8.3 已有） |
+| `qc_results`（数值 metrics，不只是布尔，第 3 节） | 数据质量看板 + 突变告警                                                      | 报表直查只读副本 / 归档 parquet              |
+| 状态机 + `attempt` / `last_error`                 | OpenTelemetry trace（Temporal workflow 历史天然是逐 episode 的全链路 trace） | 无需新增埋点                                 |
+
+**系统指标（按四个黄金信号组织）**：
+
+- 延迟：上游可见 → `COMMITTED` 的 p50/p95/p99（按 source 分维度）；staging 滞留时长；
+- 流量：各阶段 episodes/hour、帧吞吐、bytes ingested；
+- 错误：各阶段失败率（按 error class 分）、dead-letter 队列深度、重试率；
+- 饱和：worker 池利用率、DB 连接/锁等待、对象存储限速命中（503 SlowDown 计数）、存储成本斜率。
+
+**数据质量指标单独一套，比系统指标更值钱**（系统指标告诉你管道活着，质量指标告诉你管道没在安静地产出垃圾）：
+
+- 每规则 FAIL / REVIEW / SKIPPED 率的时间序列，按 source × rule_id 分维度——**突变告警比绝对阈值有用**：某规则命中率跳变通常意味着上游换了 revision 或 adapter 坐了 bug，而不是数据真的集体变坏；
+- capability 分布漂移（某 source 的 `has_video` 占比突降 = 上游布局变更的早期信号）；
+- REVIEW 队列深度与消化速率（10.6 看板的 SLO）；
+- 人工改判率（人判 ≠ 机判的占比）：阈值健康度的代理指标，接 10.6 的反馈回路。
+
+**告警分级**：page（摄取停止、DB 故障转移、dead-letter 激增）；ticket（单 source 失败率超阈、QC 率突变、成本斜率异常）；只上看板不告警（长期趋势）。日志结构化（JSON），以 `episode_uid` / `run_id` 为关联键与 trace 对齐。
+
+接缝：`RunReporter` 端口与 `IngestionRun` 聚合根已把「统计口径」定义在 domain 里；云上只是把同一份口径从 markdown presenter 改接到 metrics exporter，指标含义与 run 报告逐字一致——看板上的数字和 `rdp report` 对不上才是事故。
+
+### 10.6 人工复核：要不要 Web 看板？
+
+要，但分阶段——而且它在 schema 里早已就位：题目要求区分「合格 / 不合格 / 需要人工复核」，`REVIEW` 这个 verdict 本来就是给人看的。
+
+- **本轮（4 源、百级 episode）不做 web，是正确取舍**（8.6 反过度设计同款理由）：REVIEW 队列就是一条 SQL，CLI + markdown 报告足够。
+- 500 数据集规模：REVIEW 成为持续产生的工作流（10⁴–10⁵ 条/月量级），没有看板就没人消化，队列只会单调增长。做一个**薄的**：REVIEW 队列页（按规则/来源过滤）、episode 详情页（指标曲线、命中规则的 evidence、视频 clip）、唯一的写操作——人工改判 `human_verdict + 理由`，带审计（谁/何时/为何），写回 catalog 并 signal 唤醒等待中的 workflow。
+- **改判记录是免费的标注数据**：定期用它回归 QC 阈值（"规则判 REVIEW、人判 PASS"占比高 = 阈值过紧），这个反馈回路是质检体系能进化的前提，也是看板超越"消化队列"的第二价值。
+- 接缝：看板只是 `interfaces/` 的第二个 presenter——与 CLI 调用**同一套** application 用例；新增一个改判用例 + domain 的 `human_verdict` 字段与不变量（人工改判与机器结论**并存**，不覆盖）。
+
+### 10.7 Clean Architecture 的回报：每一条扩展答案对应一个既有接缝
+
+上面每一小节的"改法"都不是重写，是换 adapter——不是巧合，是 8.3 的依赖规则在第一天就规定了变化被隔离在哪：
+
+| 规模化改动                    | 换什么                                        | 不动什么                   |
+| ----------------------------- | --------------------------------------------- | -------------------------- |
+| SQLite → Postgres             | `EpisodeRepository` / `UnitOfWork` 实现       | 领域状态机、事务边界语义   |
+| 本地 FS → S3 + Lance/chunk    | `FrameStore` / `BlobStore` 实现               | 列名契约、canonical schema |
+| for-loop → Temporal           | application 之外的调度壳；用例原样变 activity | 用例编排逻辑、幂等键       |
+| 逐条 QC → 批量向量化 + 抽样   | application 层的规则执行器                    | `QCRule` 纯函数本身        |
+| run 报告 → Prometheus/Grafana | `RunReporter` 加一个 metrics 上报实现         | `IngestionRun` 的统计口径  |
+| CLI → CLI + Web 看板          | `interfaces/` 加一个 presenter                | 全部用例与 domain          |
+| 单机崩溃恢复 → spot 实例常态  | 无（同一套机制换了个触发者）                  | 幂等 + 租约 + 原子写       |
+
+**渐进迁移路径**（绞杀者模式，每步独立上线、独立回退）：① `FrameStore` 指向对象存储（风险最低，先解成本）→ ② Repository 换 Postgres（解写并发）→ ③ 用例包成 Temporal activity（解调度与常驻化）→ ④ 加看板（解人工复核吞吐）。顺序可换，因为四个接缝互不耦合。
+
+**不变的部分**：canonical schema、capability 声明、幂等键设计、阶段状态机——这正是这套设计的价值所在。"可扩展"在代码里的形状不是预建分布式，而是**把每个未来会变的决定都放在一个可单独替换的位置上**；规模变化只换执行引擎与存储介质，领域模型一行不动。
 
 ---
 
@@ -785,6 +948,7 @@ Commit 纪律：小步提交、message 说明"做了什么 + 为什么"，节奏
 - [ ] 含 `.git/` 的完整项目（小步 commit，message 有意义）
 - [ ] `docs/design.md`：架构、schema 取舍、checkpoint 策略、断点恢复测试、采样策略、生产化考虑、扩展问题、已知局限
 - [ ] `docs/ai/`：完整原始对话记录 + `rejected.md`
+- [ ] `docs/adr/`：schema 演化决策记录（见 8.7）
 - [ ] `README.md`：一条命令跑通（含评审场景复现脚本）
 - [ ] 示例输出：`reports/` 报告、`exports/subset.jsonl` 样例
 
@@ -979,6 +1143,7 @@ observation.state = [-0.010, -0.95, 1.10, ..., 0.019, ...]   # 实测关节角(r
 ```json
 {
   "episode_uid": "epic100:P01_01_16",
+  "schema_version": 1,
   "embodiment": "human_ego",
   "task": "open door",
   "time_range_s": [0.14, 3.37],
@@ -995,32 +1160,14 @@ observation.state = [-0.010, -0.95, 1.10, ..., 0.019, ...]   # 实测关节角(r
   },
   "state_spec": {
     "level": "per_frame_continuous",
+    "clock": "frame",
     "space": "mixed",
-    "dim": 13,
-    "physical_dim": 13,
+    "dim": 7,
+    "physical_dim": 7,
     "channels": [
       {
-        "name": "gyro.x",
-        "role": "head",
-        "space": "imu_angular_velocity",
-        "origin": "measured",
-        "unit": "rad/s",
-        "metric_convertible": true,
-        "frame": "sensor",
-        "is_physical": true
-      },
-      {
-        "name": "accel.x",
-        "role": "head",
-        "space": "imu_linear_acceleration",
-        "origin": "measured",
-        "unit": "m/s^2",
-        "metric_convertible": true,
-        "frame": "sensor",
-        "is_physical": true
-      },
-      {
         "name": "cam_t.x",
+        "group": "cam_t",
         "role": "head",
         "space": "camera_translation_abs",
         "origin": "estimated",
@@ -1031,6 +1178,7 @@ observation.state = [-0.010, -0.95, 1.10, ..., 0.019, ...]   # 实测关节角(r
       },
       {
         "name": "cam_q.w",
+        "group": "cam_q",
         "role": "head",
         "space": "camera_rotation_abs",
         "origin": "estimated",
@@ -1041,6 +1189,39 @@ observation.state = [-0.010, -0.95, 1.10, ..., 0.019, ...]   # 实测关节角(r
         "rotation": { "repr": "quat_wxyz", "compose": null }
       }
     ]
+  },
+  "stream_specs": {
+    "imu": {
+      "level": "per_frame_continuous",
+      "clock": "own_timeline",
+      "space": "mixed",
+      "dim": 6,
+      "physical_dim": 6,
+      "channels": [
+        {
+          "name": "gyro.x",
+          "group": "gyro",
+          "role": "head",
+          "space": "imu_angular_velocity",
+          "origin": "measured",
+          "unit": "rad/s",
+          "metric_convertible": true,
+          "frame": "sensor",
+          "is_physical": true
+        },
+        {
+          "name": "accel.x",
+          "group": "accel",
+          "role": "head",
+          "space": "imu_linear_acceleration",
+          "origin": "measured",
+          "unit": "m/s^2",
+          "metric_convertible": true,
+          "frame": "sensor",
+          "is_physical": true
+        }
+      ]
+    }
   },
   "capabilities": {
     "has_action": true,
@@ -1056,6 +1237,7 @@ observation.state = [-0.010, -0.95, 1.10, ..., 0.019, ...]   # 实测关节角(r
   "provenance": {
     "is_original": true,
     "upstream_revision": "epic-kitchens-100-annotations@<sha>",
+    "adapter_version": "epic_adapter@<git-sha>",
     "timestamp_source": "annotation_seconds",
     "frame_index_source": "derived_from_seconds@50fps",
     "signal_origin": {
@@ -1087,7 +1269,7 @@ observation.state = [-0.010, -0.95, 1.10, ..., 0.019, ...]   # 实测关节角(r
 | action 层级 | 逐帧连续                  | 逐帧连续         | 逐帧连续                                  | **episode 级符号标签**                       |
 | action 空间 | 任务空间绝对 xy           | 关节空间绝对角   | 末端增量位姿                              | (verb, noun) + 时间区间                      |
 | action 维度 | 2                         | 14               | 10（7 物理 + 3 控制标志）                 | 0（无逐帧列）                                |
-| state 维度  | 2                         | 14               | 15（语义不明）                            | 13（IMU 6 + 相机位姿 7）                     |
+| state 维度  | 2                         | 14               | 15（语义不明）                            | 位姿 7（帧时钟）+ IMU 6（独立时钟，2.2h）    |
 | 单位        | **像素**                  | rad + 归一化开度 | m + rad                                   | rad/s + m/s² + **无尺度位姿**                |
 | 信号来源    | 实测                      | 实测             | 实测                                      | **实测 / SfM 估计 / 人工标注 三种混合**      |
 | 是否增量    | 否                        | 否               | **位姿是 / 夹爪否（同一向量内混）**       | 否                                           |
