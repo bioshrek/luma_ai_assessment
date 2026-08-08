@@ -16,13 +16,19 @@ from rdp.application.ports import (
     SubsetWriter,
     UnitOfWorkFactory,
 )
-from rdp.domain.curation.sampler import SEQUENTIAL, Candidate, plan_sequential
+from rdp.domain.curation.sampler import (
+    BALANCED,
+    SEQUENTIAL,
+    Candidate,
+    plan_balanced,
+    plan_sequential,
+)
 from rdp.domain.episode import Episode, EpisodeMeta
 from rdp.domain.errors import InvariantViolation
 from rdp.domain.qc.rule import EpisodeVerdict
 from rdp.domain.subset import SubsetPlan
 
-STRATEGIES = (SEQUENTIAL,)
+STRATEGIES = (BALANCED, SEQUENTIAL)
 
 
 @dataclass(frozen=True)
@@ -44,7 +50,7 @@ class ExportSubset:
         *,
         out: Path,
         budget_frames: int,
-        strategy: str = SEQUENTIAL,
+        strategy: str = BALANCED,
         include_review: bool = False,
         embodiment: str | None = None,
         run_id: str = "",
@@ -59,21 +65,25 @@ class ExportSubset:
         with self.uow_factory() as uow:
             episodes = uow.episodes.list_exportable(verdicts=verdicts, embodiment=embodiment)
             licenses = uow.sources.licenses()
-            plan = plan_sequential(
-                [self._candidate(episode) for episode in episodes], budget_frames
+            candidates = [self._candidate(episode) for episode in episodes]
+            plan = (
+                plan_balanced(candidates, budget_frames, seed=seed)
+                if strategy == BALANCED
+                else plan_sequential(candidates, budget_frames)
             )
-            chosen = {entry.episode_uid for entry in plan.entries}
+            # The manifest is written in the plan's order, so the same seed yields the same
+            # bytes: reproducibility is a property of the file, not just of the episode set.
+            by_uid = {episode.uid: episode for episode in episodes}
             records = [
                 self._record(
-                    episode,
-                    uow.qc_results.rules_hit(episode.uid),
-                    licenses.get(episode.source_id),
+                    by_uid[entry.episode_uid],
+                    uow.qc_results.rules_hit(entry.episode_uid),
+                    licenses.get(by_uid[entry.episode_uid].source_id),
                 )
-                for episode in episodes
-                if episode.uid in chosen
+                for entry in plan.entries
             ]
             self.writer.write(out, records)
-            self._record_export(uow.exports, out, plan, run_id)
+            self._record_export(uow.exports, out, plan, run_id, embodiment, include_review)
             uow.commit()
 
         return ExportResult(
@@ -88,6 +98,7 @@ class ExportSubset:
             source_id=episode.source_id,
             embodiment=meta.embodiment,
             qc_verdict=episode.qc_verdict,
+            task=meta.task,
         )
 
     def _record(
@@ -129,7 +140,13 @@ class ExportSubset:
         }
 
     def _record_export(
-        self, exports: ExportRepository, out: Path, plan: SubsetPlan, run_id: str
+        self,
+        exports: ExportRepository,
+        out: Path,
+        plan: SubsetPlan,
+        run_id: str,
+        embodiment: str | None,
+        include_review: bool,
     ) -> None:
         exports.record(
             export_id=f"{out.name}@{self.clock.now_iso()}",
@@ -140,6 +157,12 @@ class ExportSubset:
             n_frames=plan.total_frames,
             path=str(out),
             created_at=self.clock.now_iso(),
+            # Everything needed to reproduce this export: the seed, the filters, and the quota
+            # each embodiment was offered against what it could actually take.
+            seed=plan.seed,
+            embodiment=embodiment,
+            include_review=include_review,
+            stats=plan.stats(),
         )
 
     @staticmethod

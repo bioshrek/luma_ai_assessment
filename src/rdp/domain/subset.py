@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Self
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -29,6 +29,24 @@ class SubsetEntry(BaseModel):
         return self
 
 
+class GroupAllocation(BaseModel):
+    """What one stratum was offered and what it could actually take (design §6.3).
+
+    Kept on the plan because "why did aloha get 31% of the budget" is a question the export has
+    to be able to answer months later, from the `exports` row alone.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    embodiment: str = Field(min_length=1)
+    eligible_episodes: int = Field(ge=0)
+    eligible_frames: int = Field(ge=0)
+    weight: float = Field(ge=0.0, le=1.0)
+    quota_frames: int = Field(ge=0)
+    selected_episodes: int = Field(ge=0)
+    selected_frames: int = Field(ge=0)
+
+
 class SubsetPlan(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -36,10 +54,23 @@ class SubsetPlan(BaseModel):
     strategy: str
     seed: int | None = None
     entries: tuple[SubsetEntry, ...] = ()
+    groups: tuple[GroupAllocation, ...] = ()
 
     @property
     def total_frames(self) -> int:
         return sum(entry.n_frames for entry in self.entries)
+
+    def stats(self) -> dict[str, Any]:
+        """The one definition of an export's numbers; the `exports` row stores exactly this."""
+        return {
+            "strategy": self.strategy,
+            "seed": self.seed,
+            "budget_frames": self.budget_frames,
+            "used_frames": self.total_frames,
+            "shortfall_frames": self.budget_frames - self.total_frames,
+            "n_episodes": len(self.entries),
+            "groups": [group.model_dump(mode="json") for group in self.groups],
+        }
 
     @model_validator(mode="after")
     def _check(self) -> Self:

@@ -4,8 +4,9 @@
 -- schema version 2 (M2) adds `episode_state`, `episodes.ruleset_version` and
 -- `runs.resumed_from`. Version 3 (M5) adds `episodes.segment_json` and
 -- `episodes.termination_column`, the two facts the QC episode view gained, and version 4 adds
--- `episodes.stream_specs_json`, which M4 declared on the entity but never stored. Every version
--- bump so far has been additive, so `catalog.py` upgrades an existing file with
+-- `episodes.stream_specs_json`, which M4 declared on the entity but never stored. Version 5 (M6)
+-- adds the four `exports` columns a stratified export must keep to be reproducible. Every
+-- version bump so far has been additive, so `catalog.py` upgrades an existing file with
 -- `ALTER TABLE ... ADD COLUMN` rather than a migration script.
 
 CREATE TABLE IF NOT EXISTS sources (
@@ -122,5 +123,11 @@ CREATE TABLE IF NOT EXISTS exports (
     n_episodes    INTEGER NOT NULL,
     n_frames      INTEGER NOT NULL,
     path          TEXT NOT NULL,
-    created_at    TEXT NOT NULL
+    created_at    TEXT NOT NULL,
+    -- Everything the export cannot be reproduced without: the seed, the two filters, and the
+    -- per-embodiment quota against what that embodiment could actually supply.
+    seed           INTEGER,
+    embodiment     TEXT,
+    include_review INTEGER,
+    stats_json     TEXT
 );

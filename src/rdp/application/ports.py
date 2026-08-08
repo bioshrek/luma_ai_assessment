@@ -155,6 +155,10 @@ class ExportRepository(Protocol):
         n_frames: int,
         path: str,
         created_at: str,
+        seed: int | None,
+        embodiment: str | None,
+        include_review: bool,
+        stats: Mapping[str, Any],
     ) -> None: ...
 
 

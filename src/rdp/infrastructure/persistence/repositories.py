@@ -296,13 +296,32 @@ class SqliteExportRepository:
         n_frames: int,
         path: str,
         created_at: str,
+        seed: int | None,
+        embodiment: str | None,
+        include_review: bool,
+        stats: Mapping[str, Any],
     ) -> None:
         self._conn.execute(
             "INSERT INTO exports (export_id, run_id, strategy, budget_frames, n_episodes, "
-            "n_frames, path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "n_frames, path, created_at, seed, embodiment, include_review, stats_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(export_id) DO UPDATE SET n_episodes = excluded.n_episodes, "
-            "n_frames = excluded.n_frames, path = excluded.path",
-            (export_id, run_id, strategy, budget_frames, n_episodes, n_frames, path, created_at),
+            "n_frames = excluded.n_frames, path = excluded.path, "
+            "stats_json = excluded.stats_json",
+            (
+                export_id,
+                run_id,
+                strategy,
+                budget_frames,
+                n_episodes,
+                n_frames,
+                path,
+                created_at,
+                seed,
+                embodiment,
+                int(include_review),
+                _dumps(dict(stats)),
+            ),
         )
 
 

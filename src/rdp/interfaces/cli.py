@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from rdp.domain.curation.sampler import SEQUENTIAL
+from rdp.domain.curation.sampler import BALANCED
 from rdp.domain.errors import BudgetTooSmall
 from rdp.domain.run import IngestionRun
 from rdp.infrastructure.storage.atomic_fs import atomic_write_text
@@ -95,9 +95,12 @@ def _finish(container: Container, ingestion: IngestionRun) -> None:
 def export(
     budget: Annotated[int, typer.Option("--budget", help="Maximum total frames.")],
     out: Annotated[Path, typer.Option("--out", help="Destination JSONL manifest.")],
-    strategy: Annotated[str, typer.Option("--strategy")] = SEQUENTIAL,
+    strategy: Annotated[str, typer.Option("--strategy")] = BALANCED,
     include_review: Annotated[bool, typer.Option("--include-review")] = False,
     embodiment: Annotated[str | None, typer.Option("--embodiment")] = None,
+    seed: Annotated[
+        int | None, typer.Option("--seed", help="Fixes the within-group order; replayable.")
+    ] = None,
     store: StoreOption = DEFAULT_STORE,
     config: ConfigOption = DEFAULT_CONFIG,
 ) -> None:
@@ -110,14 +113,23 @@ def export(
             strategy=strategy,
             include_review=include_review,
             embodiment=embodiment,
+            seed=seed,
         )
     except BudgetTooSmall as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=2) from exc
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     console.print(
         f"[green]{result.n_episodes} episodes, {result.n_frames}/{budget} frames "
         f"-> {result.path}[/green]"
     )
+    for group in result.plan.groups:
+        console.print(
+            f"  {group.embodiment:<24} quota {group.quota_frames:>8}  "
+            f"took {group.selected_frames:>8} in {group.selected_episodes:>4} episodes "
+            f"(of {group.eligible_frames} eligible)"
+        )
 
 
 @app.command()
