@@ -103,19 +103,54 @@ Source（数据集级）→ Episode（轨迹级）→ Frame（帧级）
 理由：把 2 维 xy、14 维关节角、7 维 delta 位姿硬压进同一个空间只能靠补零和瞎缩放，是不可逆的信息破坏，且下游训练无法还原语义。改为：
 
 ```python
-ActionSpec = {
-  "space": "joint_position" | "ee_pose_abs" | "ee_pose_delta" | "cartesian_2d" | "none",
+SignalSpec = {                         # action 与 state 共用同一个值对象，见下方「b'」
+  "is_command": bool,                  # True=下发的目标值(action)；False=实测回读(state)
+  "space": "joint_position" | "ee_pose_abs" | "ee_pose_delta" | "cartesian_2d"
+           | "none" | "unknown",       # unknown：上游语义不明（C 的 state[15]），禁止猜
   "dim": int,                          # 存储的总列宽
   "physical_dim": int,                 # 其中物理通道数（统计/阈值只用这些）
-  "channels": [ {"name": "left_arm.j1", "role": "arm", "unit": "rad",
-                 "arm_id": "left", "is_physical": True, "min": ..., "max": ...}, ... ],
-  "gripper": {"indices": [6], "convention": "0=closed,1=open"} | None,
+  "channels": [ Channel, ... ],
   "frame": "base" | "world" | "camera" | None,
   "is_delta": bool,
 }
+
+Channel = {
+  "name": "left.gripper",
+  "role": "joint" | "end_effector" | "gripper" | "base" | "head"
+          | "control_flag" | "unknown",
+  "unit": "rad" | "m" | "px" | "normalized" | None,
+  "metric_convertible": bool,          # 能否换算到 SI；pusht 的 px、夹爪归一化开度均为 False
+  "arm_id": "left" | "right" | None,
+  "is_physical": bool,
+  "min": float | None, "max": float | None,
+  "gripper": {                         # 仅 role == "gripper" 时非空
+      "convention": "0=closed,1=open",
+      "original_convention": "continuous_width" | "-1=close,+1=open" | ...,
+      "inverse": {"scale": float, "offset": float},   # 归一化的反变换参数
+  } | None,
+}
+
+ActionSpec = SignalSpec(is_command=True)
+StateSpec  = SignalSpec(is_command=False)
 ```
 
-统一的部分只有**通道级元信息**：每个通道都必须有 `role`（arm / gripper / base / head / **control_flag** / none）、`unit`、`arm_id`、`is_physical`、取值范围。下游可以按 role 做跨本体的通用处理，也可以按 space 分桶训练。
+统一的部分只有**通道级元信息**：每个通道都必须有 `role`、`unit`、`metric_convertible`、`arm_id`、`is_physical`、取值范围。下游可以按 role 做跨本体的通用处理，也可以按 space 分桶训练。
+
+**三处相对初稿的修正，全部由来源 B 逼出来**：
+
+- **`gripper` 从 spec 级下沉到通道级。** 初稿的 `{"indices": [6], "convention": ...}` 假设一条 episode 只有一个夹爪；ALOHA 有**两个**，且分属不同 `arm_id`，约定与反变换参数也可能不同。同时 2.2b 要求“保留反变换参数”，初稿里这些参数根本无处安放。
+- **新增 `metric_convertible`（通道级）。** 2.2b 与附录 A.A.2 都已断言它必须是通道级属性，但初稿的 schema 块里没有这个字段。B 的 14 维正是最强的证据：12 个 `rad` 通道可换算，2 个夹爪归一化开度不可换算，**同一向量内两种取值**。
+- **`role` 枚举修正为 `joint / end_effector / gripper / base / head / control_flag / unknown`。** 初稿写的是 `arm`，但附录 A.A.3 给 pusht 指定的是 `role="end_effector"` ——两处对不上。B 的 12 个关节是 `joint`（可插值），A 的 xy 是 `end_effector`，语义不同，2.2c 的“按 role 决定插值方式”依赖这个区分。
+
+**b'. `state` 也必须有 spec，不能只有 `action` 有。**
+
+这是初稿最大的结构性缺口，B 让它无法回避：B 的 `observation.state` 与 `action` 是**同一空间、同维、同通道语义**的一对（目标值 vs 实测值），而 C 的 `observation.state[15]` 语义在 dataset card 里都语焉不详。没有 `StateSpec` 会直接导致三件事做不了：
+
+1. `STATE_ACTION_ECHO` 的前置条件“同空间同维”**在数据里无法表达**，规则只能靠列宽相等这种脆弱的猜测来启用；
+2. 附录 A.C.7 的“拿不准语义就 `state=NULL`”没有落点——现在写成 `StateSpec.space="unknown"` + 通道 `role="unknown"`，是一个**可被查询、可被规则跳过**的显式声明，而不是沉默的缺失；
+3. 8.4 的不变量 3（禁止 0 填充）只覆盖了 action，state 侧没有对称约束。
+
+复用同一个值对象而不是新写一个类，是因为两者的字段需求完全相同，唯一差别就是 `is_command`——这个字段本身也是附录 A.B.3 要求过、但初稿 schema 漏掉的。
 
 **`control_flag` 这个 role 是必需的，不是凑数**：来源 C 的 action 向量里混着 `terminate_episode`（一个 one-hot 控制标志，由策略输出「我做完了」），它和 `world_vector`(m) 躺在同一个向量里，但既没有单位、也没有物理限位、变化模式也完全不同（末帧 0→1 的阶跃）。把它按物理通道处理会让 `ACTION_RANGE` 的限位无意义、让 `ACTION_JERK` 在**每一条 C 的 episode 上都误报**。因此：所有跨通道统计（mean/std/行程/jerk/限位）一律只对 `is_physical == True` 的通道计算，`dim` 与 `physical_dim` 必须分开存。
 
@@ -267,7 +302,7 @@ store/
 
 设计要点：
 
-- **`STATE_ACTION_ECHO` 是一个真陷阱，必须写进文档**：ALOHA（来源 B）是**关节位置控制的遥操示教**，action 就是下一刻的目标关节角，`corr(a_t, s_t)` 天然 > 0.999——按相关性判会把整个数据集全部误判。真正的异常信号是**位级相等**（真实伺服总有跟踪误差，不可能 bit-identical），以及 `lag-1 互信息` 降为 0（action 完全不领先于 state）。先跑一轮统计把 `max abs(a-s)` 的分布画出来再定阈值。
+- **`STATE_ACTION_ECHO` 是一个真陷阱，必须写进文档**：ALOHA（来源 B）是**关节位置控制的遥操示教**，action 就是下一刻的目标关节角，`corr(a_t, s_t)` 天然 > 0.999——按相关性判会把整个数据集全部误判。真正的异常信号是**位级相等**（真实伺服总有跟踪误差，不可能 bit-identical），以及 `lag-1 互信息` 降为 0（action 完全不领先于 state）。先跑一轮统计把 `max abs(a-s)` 的分布画出来再定阈值。启用条件不得靠“列宽相等”猜，而是显式判 `action_spec.space == state_spec.space and action_spec.dim == state_spec.dim`（这就是 2.2b' 引入 `StateSpec` 的直接原因）；C 的 `state.space == "unknown"` 因此干净地 `SKIPPED`。
 - **时间戳类规则需要 `timestamp_source` 而不只是 capability**：RLDS（来源 C）的 step 里**根本没有时间戳**，时间是由 step index / 声明控制频率合成的。对合成时间戳跑 `TS_MONOTONIC` 永远 PASS，是无意义的假阳性——所以结论必须是 `SKIPPED(reason=synthetic_timestamp)`。这一条是“降级 ≠ 通过”的第二个典型例子。
 - **非物理通道必须从数值类规则里排除，这是第三个假阳性陷阱**：C 的 `terminate_episode` 在末帧从 0 跳到 1，幅度比该“通道”平时的 p99.9 大几个量级——若不按 `is_physical` 过滤，**每一条 C 的 episode 都会被 `ACTION_JERK` 判成 REVIEW**，且它的“限位”是 $\{0,1\}$ 而不是 ±0.1m，`ACTION_RANGE` 按物理限位判也没意义。因此阈值与统计一律按 `role` 分桶，而不是按列序号。
 - **`TERMINATION_CONSISTENCY` 能抓到其他九条看不见的错**：归一化时把两条 episode 错接成一条（中间帧出现结束信号）、或一条被截成两半（末帧无结束信号）。B/D 没有显式结束信号，`has_termination_signal=False` → 干净地 `SKIPPED`，又一个降级路径的实例。
@@ -288,7 +323,7 @@ episodes(
   source_id, upstream_id, content_hash,
   embodiment, action_space, action_dim, n_frames,
   fps_nominal, fps_effective, duration_s,
-  capabilities_json, action_spec_json, camera_json, raw_extra_json, boundary_json,
+  capabilities_json, action_spec_json, state_spec_json, camera_json, raw_extra_json, boundary_json,
   frames_path, status,       -- 状态机，见下
   qc_verdict,                -- PASS | FAIL | REVIEW | PENDING
   first_seen_run, last_update_run, updated_at,
@@ -390,6 +425,7 @@ CLI：`rdp export --budget 50000 --strategy balanced --out exports/subset.jsonl`
 | **Frame**            | episode 内一帧低维信号                                        | 帧数据不是实体，是 `FrameTable` 值对象 |
 | **Embodiment**       | 本体（aloha_bimanual / ur5 / pusht_planar / human_hand）      | `domain/embodiment.py`                 |
 | **ActionSpec**       | 动作空间的结构化描述（值对象，不可变）                        | `domain/action_spec.py`                |
+| **StateSpec**        | 状态空间的结构化描述，与 ActionSpec 共用 `SignalSpec` 值对象  | `domain/action_spec.py`                |
 | **Capabilities**     | 该 episode 拥有哪些模态（值对象）                             | `domain/capabilities.py`               |
 | **Provenance**       | 数据来自哪、经过什么变换、时间戳是真的还是合成的              | `domain/provenance.py`                 |
 | **EpisodeBoundary**  | episode 在哪结束、由谁判定、是终止还是被截断                  | `domain/boundary.py`                   |
@@ -492,12 +528,13 @@ class FaultInjector(Protocol):                          # 生产实现是 no-op
 ### 8.4 领域不变量（写在 domain 里，而不是散在流程里）
 
 1. `IngestionStage.advance()` 只允许 `DISCOVERED → FETCHED → NORMALIZED → QC_DONE → COMMITTED`，跳级或回退必须显式调用 `reset_to()` 并带原因。
-2. `CanonicalEpisode` 一旦构造完成即不可变；`ActionSpec.dim == len(channels) == action 列宽`，构造时校验，违反直接抛领域异常。
-3. `Capabilities.has_action == False` ⟹ `ActionSpec.space == NONE` 且 frames 中 action 列为 NULL（禁止 0 填充）。
+2. `CanonicalEpisode` 一旦构造完成即不可变；`SignalSpec.dim == len(channels) == 对应列宽`（action 与 state 各自校验），构造时校验，违反直接抛领域异常。
+3. `Capabilities.has_action == False` ⟹ `ActionSpec.space == NONE` 且 frames 中 action 列为 NULL（禁止 0 填充）；`has_state == False` 对 `StateSpec` 同理。
 4. QCRule 的 `required_capabilities` 不满足 ⟹ 结论只能是 `SKIPPED`，领域层强制，规则实现无法绕过。
 5. `SubsetPlan` 总帧数 ≤ 预算，且每个条目的 `frame_range` 必须落在该 episode 的实际帧数内。
-6. `ActionSpec.physical_dim == len([c for c in channels if c.is_physical])`；且任何跨通道统计（限位/jerk/行程）只能在物理通道子集上计算——由领域层的 `physical_view()` 统一提供，规则拿不到完整向量，从机制上无法误用。
+6. `SignalSpec.physical_dim == len([c for c in channels if c.is_physical])`；且任何跨通道统计（限位/jerk/行程）只能在物理通道子集上计算——由领域层的 `physical_view()` 统一提供，规则拿不到完整向量，从机制上无法误用。
 7. `EpisodeBoundary.is_truncated == True` ⇒ `end_reason != "success"`；`success` 为 `None` 时禁止任何下游把它当 `False` 读（类型层强制）。
+8. `role == "gripper"` ⟹ `channel.gripper` 非空（必须带原始约定与反变换参数）；`role != "gripper"` ⟹ `channel.gripper is None`。否则 2.2b 的“归一化可逆”只是口号。
 
 这些不变量全部有对应的单元测试，先写测试再写实现。
 
@@ -725,7 +762,7 @@ observation.state = [-0.010, -0.95, 1.10, ..., 0.019, ...]   # 实测关节角(r
 
 1. **同一个向量里混着两种单位**：12 个关节是 `rad`，2 个夹爪是归一化开度（或米）。所以 `unit` 只能是通道级属性，不能挂在 episode 上。
 2. **需要 `arm_id`**：`left_* / right_*` 必须结构化成 `arm_id="left"/"right"`，否则双臂数据下游无法按臂拆分，也无法和单臂数据做任何对齐。这是"分组保留 + 打标签"策略的直接依据。
-3. **action 与 state 是同一空间的"目标值 vs 实测值"**——这是 `STATE_ACTION_ECHO` 假阳性陷阱的来源（第 3 节）；也说明 action 语义不止有"空间"这一维，`ActionSpec` 还需要 `is_command: bool`。
+3. **action 与 state 是同一空间的"目标值 vs 实测值"**——这是 `STATE_ACTION_ECHO` 假阳性陷阱的来源（第 3 节）；也说明 action 语义不止有"空间"这一维，还需要 `is_command: bool` 来区分下发值与回读值，且 state 必须有与 action 对称的 spec（已落入 2.2 的 `SignalSpec`）。
 4. 相机路数随数据集变化（sim 版通常只有 `top`，真机 ALOHA 常见 4 路：top / low / left_wrist / right_wrist）→ 相机拓扑必须数据驱动读出，禁止硬编码。
 5. 50 Hz vs pusht 的 10 Hz：**同样 8 秒的轨迹，帧数差 5 倍**。这直接决定采样策略不能按帧数比例分配（第 6 节）。
 
