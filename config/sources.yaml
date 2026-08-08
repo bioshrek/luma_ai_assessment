@@ -45,14 +45,22 @@ sources:
     shard_layout_revision: "train:412-shards@0.1.0"
     embodiment: ur5_single_arm
     license: cc-by-4.0
-    max_episodes: 80 # measured ~71 steps/episode -> ~5.7k frames
+    # Measured ~71 steps/episode, but also ~55 MB of inlined camera frames per episode, and
+    # raw/ is kept verbatim. 12 episodes is ~660 MB staged from ~5 shards; 80 would be ~4.4 GB.
+    max_episodes: 12
     reader: tfrecord_direct # docs/adr/001-rlds-reader-no-tensorflow.md: no TensorFlow
+    # RLDS carries no timestamp field at all, so the time axis is ours. 5 Hz is the control
+    # frequency published on the Berkeley UR5 dataset page cited in dataset_info.json; the
+    # adapter refuses to run without this value rather than inventing one (ADR 009).
+    control_hz: 5
     drop_channels:
       # 512-D per-step derivative, recomputable from the text; see design §A.C.6
       - steps/observation/natural_language_embedding
     notes: >-
-      No stable upstream episode id: identity is (split, shard, index-in-shard), so
-      content_hash must be computed over normalized episode bytes, not shard bytes.
+      No stable upstream episode id. Identity is the episode's index within the split, which
+      survives a re-shard; the shard file and the offset inside it are locators only. The
+      declared shard_layout_revision is the staleness lever: changing it re-normalizes the
+      corpus (and re-verifies content_hash) instead of duplicating it.
 
   # D — EPIC-KITCHENS-100, taken by layer. Action is an episode-level symbolic label.
   - source_id: epic100

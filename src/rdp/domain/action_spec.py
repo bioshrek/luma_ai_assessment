@@ -93,6 +93,8 @@ class ArmId(StrEnum):
 class RotationRepr(StrEnum):
     AXIS_ANGLE = "axis_angle"
     ROTVEC = "rotvec"
+    EULER_RPY = "euler_rpy"
+    """Roll/pitch/yaw: the axes are named upstream but the order is not — source C (ADR 009)."""
     EULER_XYZ = "euler_xyz"
     EULER_ZYX = "euler_zyx"
     QUAT_WXYZ = "quat_wxyz"

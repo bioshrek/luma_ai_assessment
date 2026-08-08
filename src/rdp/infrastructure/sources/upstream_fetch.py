@@ -12,6 +12,8 @@ import shutil
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import IO
 
@@ -53,6 +55,34 @@ class UpstreamFetcher:
         except UpstreamNotFound:
             return False
         return True
+
+    @contextmanager
+    def open_stream(self, source: Source, rel_path: str) -> Iterator[IO[bytes]]:
+        """Read `rel_path` as a stream, without caching the whole file.
+
+        Source C's shards are ~180 MB and hold only a handful of episodes each, so a caller
+        that wants episode 0 must be able to stop reading after ~55 MB instead of storing the
+        rest. `local_path` would defeat that.
+        """
+        local_root = _local_root(source)
+        if local_root is not None:
+            candidate = local_root / rel_path
+            if not candidate.exists():
+                raise UpstreamNotFound(str(candidate))
+            with candidate.open("rb") as handle:
+                yield handle
+            return
+        url = _resolve_url(source, rel_path)
+        scheme = urllib.parse.urlparse(url).scheme
+        if scheme not in _ALLOWED_SCHEMES:
+            raise ValueError(f"refusing to fetch {url!r}: only {_ALLOWED_SCHEMES} are allowed")
+        try:
+            with urllib.request.urlopen(url, timeout=self.timeout) as response:
+                yield response
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise UpstreamNotFound(url) from exc
+            raise
 
     def _download(self, url: str, destination: Path) -> None:
         scheme = urllib.parse.urlparse(url).scheme

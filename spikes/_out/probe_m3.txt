@@ -1,0 +1,83 @@
+
+==============================================================================
+B — lerobot/aloha_sim_insertion_human
+==============================================================================
+  rows=7500 fps=50 action=(7500, 14) state=(7500, 14)
+  channel                 action min  action max   state min   state max
+  left_waist                -0.28839     0.31753    -0.28606     0.31672
+  left_shoulder             -0.95567     0.06750    -0.96000     0.06883
+  left_elbow                 0.30219     1.19037     0.30670     1.19258
+  left_forearm_roll         -0.21169     0.28072    -0.20929     0.27569
+  left_wrist_angle          -0.33594     0.99862    -0.32773     0.99975
+  left_wrist_rotate         -0.28072     0.29606    -0.29861     0.29689
+  left_gripper               0.08270     1.16246     0.00000     1.00180
+  right_waist               -0.47247     0.32060    -0.47746     0.32043
+  right_shoulder            -0.97101     0.13806    -0.96813     0.14065
+  right_elbow                0.25004     1.21184     0.25444     1.21576
+  right_forearm_roll        -0.07823     0.70563    -0.15494     0.80689
+  right_wrist_angle         -0.38963     1.02777    -0.37782     1.02873
+  right_wrist_rotate        -0.84522     0.48014    -0.84610     0.50638
+  right_gripper             -0.04621     0.95406    -0.01210     1.07580
+
+==============================================================================
+B — is the gripper channel monotone-open or an absolute normalized opening?
+==============================================================================
+  action left_gripper: p0=0.08270 p50=0.17023 p100=1.16246 n_unique=487
+    first 10 = [0.14357, 0.14357, 0.14357, 0.14357, 0.14357, 0.14357, 0.14357, 0.14357, 0.14357, 0.14357]
+  action right_gripper: p0=-0.04621 p50=0.01691 p100=0.95406 n_unique=499
+    first 10 = [-0.03124, -0.03124, -0.03124, -0.03124, -0.03124, -0.03124, -0.03124, -0.03124, -0.03124, -0.03124]
+
+==============================================================================
+B — is `timestamp` a clock, or frame_index/fps restated? (the ADR 005 test)
+==============================================================================
+  bit-identical to float32(frame_index/fps): True
+
+==============================================================================
+B — boundary columns and camera features
+==============================================================================
+  columns = ['observation.state', 'action', 'episode_index', 'frame_index', 'timestamp', 'next.done', 'index', 'task_index']
+  camera observation.images.top: dtype=video shape=[480, 640, 3]
+
+==============================================================================
+C — berkeley_autolab_ur5: every episode in the cached shard prefix
+==============================================================================
+
+  -- episode 0: 71 steps, record 54.8 MB
+     is_first  sum=1 at=[0]
+     is_last   sum=2 at=[69, 70]
+     is_terminal sum=2 at=[69, 70]
+     terminate_episode nonzero at=[69, 70]
+     gripper unique=[0.0]
+     world_vector zero rows at=[68, 69, 70]
+     reward max=1.000 nonzero at=[69]
+     instruction unique={b'sweep the green cloth to the left side of the table'}
+     bytes per feature: {'steps/observation/image': 31060785, 'steps/observation/natural_language_instruction': 3621, 'steps/observation/image_with_depth': 12446226, 'steps/observation/hand_image': 11182489}
+
+  -- episode 1: 76 steps, record 60.4 MB
+     is_first  sum=1 at=[0]
+     is_last   sum=2 at=[74, 75]
+     is_terminal sum=2 at=[74, 75]
+     terminate_episode nonzero at=[74, 75]
+     gripper unique=[0.0]
+     world_vector zero rows at=[0, 73, 74, 75]
+     reward max=1.000 nonzero at=[74]
+     instruction unique={b'sweep the green cloth to the left side of the table'}
+     bytes per feature: {'steps/observation/image': 32478163, 'steps/observation/hand_image': 14117041, 'steps/observation/natural_language_instruction': 3876, 'steps/observation/image_with_depth': 13627255}
+
+==============================================================================
+C — feature byte budget for a mini fixture
+==============================================================================
+    steps/action/gripper_closedness_action           kind=float  approx_bytes=284
+    steps/action/rotation_delta                      kind=float  approx_bytes=852
+    steps/action/terminate_episode                   kind=float  approx_bytes=284
+    steps/action/world_vector                        kind=float  approx_bytes=852
+    steps/is_first                                   kind=int64  approx_bytes=71
+    steps/is_last                                    kind=int64  approx_bytes=71
+    steps/is_terminal                                kind=int64  approx_bytes=71
+    steps/observation/hand_image                     kind=bytes  approx_bytes=11182489
+    steps/observation/image                          kind=bytes  approx_bytes=31060785
+    steps/observation/image_with_depth               kind=bytes  approx_bytes=12446226
+    steps/observation/natural_language_embedding     kind=float  approx_bytes=145408
+    steps/observation/natural_language_instruction   kind=bytes  approx_bytes=3621
+    steps/observation/robot_state                    kind=float  approx_bytes=4260
+    steps/reward                                     kind=float  approx_bytes=284

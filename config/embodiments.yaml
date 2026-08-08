@@ -70,3 +70,461 @@ embodiments:
           group: ee_xy
           min: 0.0
           max: 512.0
+
+  # ------------------------------------------------------------------------------------
+  # B — ALOHA bimanual. One 14-D vector carrying TWO units: 12 joints in radians and
+  # 2 normalized gripper openings. That is the fact that forces `unit` and `gripper` to be
+  # per-channel rather than per-spec (ADR 008). `arm_id` is mandatory here: without it a
+  # dual-arm vector cannot be split, or aligned with a single-arm embodiment.
+  # ------------------------------------------------------------------------------------
+  aloha_bimanual:
+    description: >-
+      ALOHA simulated bimanual insertion, 2 x (6 joints + 1 gripper) = 14. Action is the
+      leader-arm target pose (a command); state is the follower-arm measured pose.
+    is_real_robot: false
+    is_teleop: true # human teleoperation through the ALOHA leader arms
+
+    # Action and state are the SAME channel layout — target vs measured. `is_command` is the
+    # only thing distinguishing them, and it is what defends STATE_ACTION_ECHO in M5.
+    action: &aloha_channels
+      level: per_frame_continuous
+      channels:
+        - {
+            name: left.waist,
+            role: joint,
+            space: joint_position,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            arm_id: left,
+            group: left_arm,
+          }
+        - {
+            name: left.shoulder,
+            role: joint,
+            space: joint_position,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            arm_id: left,
+            group: left_arm,
+          }
+        - {
+            name: left.elbow,
+            role: joint,
+            space: joint_position,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            arm_id: left,
+            group: left_arm,
+          }
+        - {
+            name: left.forearm_roll,
+            role: joint,
+            space: joint_position,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            arm_id: left,
+            group: left_arm,
+          }
+        - {
+            name: left.wrist_angle,
+            role: joint,
+            space: joint_position,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            arm_id: left,
+            group: left_arm,
+          }
+        - {
+            name: left.wrist_rotate,
+            role: joint,
+            space: joint_position,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            arm_id: left,
+            group: left_arm,
+          }
+        # Position 6 of the same vector is neither a joint angle nor in radians.
+        - name: left.gripper
+          role: gripper
+          space: gripper
+          origin: measured
+          is_delta: false # an absolute opening, unlike source C's ternary change command
+          is_physical: true
+          unit: normalized
+          metric_convertible: false # no published jaw-width scale
+          arm_id: left
+          gripper: &aloha_gripper
+            # Values are stored exactly as upstream emitted them, so our convention IS the
+            # original one and the inverse is the identity. The open/closed DIRECTION is not
+            # stated by the dataset and is not guessed here — see ADR 008.
+            convention: normalized_unverified_direction
+            original_convention: normalized_unverified_direction
+            inverse: { scale: 1.0, offset: 0.0 }
+        - {
+            name: right.waist,
+            role: joint,
+            space: joint_position,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            arm_id: right,
+            group: right_arm,
+          }
+        - {
+            name: right.shoulder,
+            role: joint,
+            space: joint_position,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            arm_id: right,
+            group: right_arm,
+          }
+        - {
+            name: right.elbow,
+            role: joint,
+            space: joint_position,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            arm_id: right,
+            group: right_arm,
+          }
+        - {
+            name: right.forearm_roll,
+            role: joint,
+            space: joint_position,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            arm_id: right,
+            group: right_arm,
+          }
+        - {
+            name: right.wrist_angle,
+            role: joint,
+            space: joint_position,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            arm_id: right,
+            group: right_arm,
+          }
+        - {
+            name: right.wrist_rotate,
+            role: joint,
+            space: joint_position,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            arm_id: right,
+            group: right_arm,
+          }
+        - name: right.gripper
+          role: gripper
+          space: gripper
+          origin: measured
+          is_delta: false
+          is_physical: true
+          unit: normalized
+          metric_convertible: false
+          arm_id: right
+          gripper: *aloha_gripper
+
+    state: *aloha_channels
+
+  # ------------------------------------------------------------------------------------
+  # C — Berkeley UR5 (OXE / RLDS). The vector that disproves every spec-level shortcut:
+  # 6 delta channels, 1 gripper CHANGE command, and 1 non-physical control flag, in three
+  # different units, inside one 8-D action (ADR 003).
+  # ------------------------------------------------------------------------------------
+  ur5_single_arm:
+    description: >-
+      UR5 single arm, teleoperated. Action is an end-effector delta pose plus a ternary
+      gripper change command plus a policy termination flag. State is a 15-D vector whose
+      element semantics are published nowhere.
+    is_real_robot: true
+    is_teleop: true
+
+    action:
+      level: per_frame_continuous
+      channels:
+        - {
+            name: ee.dx,
+            role: end_effector,
+            space: ee_translation_delta,
+            origin: measured,
+            is_delta: true,
+            is_physical: true,
+            unit: m,
+            metric_convertible: true,
+            frame: base,
+            group: ee_translation,
+          }
+        - {
+            name: ee.dy,
+            role: end_effector,
+            space: ee_translation_delta,
+            origin: measured,
+            is_delta: true,
+            is_physical: true,
+            unit: m,
+            metric_convertible: true,
+            frame: base,
+            group: ee_translation,
+          }
+        - {
+            name: ee.dz,
+            role: end_effector,
+            space: ee_translation_delta,
+            origin: measured,
+            is_delta: true,
+            is_physical: true,
+            unit: m,
+            metric_convertible: true,
+            frame: base,
+            group: ee_translation,
+          }
+        # features.json says "Delta change in roll, pitch, yaw" — so the axes are named but
+        # the composition order is not. `unknown` rather than a plausible guess.
+        - {
+            name: ee.drx,
+            role: end_effector,
+            space: ee_rotation_delta,
+            origin: measured,
+            is_delta: true,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            frame: base,
+            group: ee_rotation,
+            rotation: { repr: euler_rpy, compose: unknown },
+          }
+        - {
+            name: ee.dry,
+            role: end_effector,
+            space: ee_rotation_delta,
+            origin: measured,
+            is_delta: true,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            frame: base,
+            group: ee_rotation,
+            rotation: { repr: euler_rpy, compose: unknown },
+          }
+        - {
+            name: ee.drz,
+            role: end_effector,
+            space: ee_rotation_delta,
+            origin: measured,
+            is_delta: true,
+            is_physical: true,
+            unit: rad,
+            metric_convertible: true,
+            frame: base,
+            group: ee_rotation,
+            rotation: { repr: euler_rpy, compose: unknown },
+          }
+        - name: gripper
+          role: gripper
+          space: gripper
+          origin: measured
+          # A ternary CHANGE command, not an opening: "1 if close, -1 if open, 0 if no
+          # change". Normalizing it to B's absolute 0..1 convention would silently reinterpret
+          # "no change" as "fully closed" (ADR 003 decision 2).
+          is_delta: true
+          is_physical: true
+          unit: normalized
+          metric_convertible: false
+          min: -1.0
+          max: 1.0
+          gripper:
+            convention: "-1=open,0=no_change,+1=close"
+            original_convention: "-1=open,0=no_change,+1=close"
+            inverse: { scale: 1.0, offset: 0.0 }
+        # Position 7 is not a physical quantity at all. is_physical=false keeps it out of
+        # every cross-channel statistic (FrameTable.physical_view, invariant 6).
+        - {
+            name: flag.terminate_episode,
+            role: control_flag,
+            space: flag,
+            origin: measured,
+            is_delta: false,
+            is_physical: false,
+            metric_convertible: false,
+            min: 0.0,
+            max: 1.0,
+          }
+
+    # features.json defers the meaning of these 15 numbers to an offsite web page. A wrong
+    # role is worse than an honest absence, so every one of them is `unknown` and the vector
+    # is preserved verbatim (ADR 003 decision 4).
+    state:
+      level: per_frame_continuous
+      channels:
+        - {
+            name: robot_state_00,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_01,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_02,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_03,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_04,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_05,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_06,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_07,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_08,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_09,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_10,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_11,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_12,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_13,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }
+        - {
+            name: robot_state_14,
+            role: unknown,
+            space: unknown,
+            origin: measured,
+            is_delta: false,
+            is_physical: true,
+            metric_convertible: false,
+          }

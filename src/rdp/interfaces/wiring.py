@@ -23,6 +23,7 @@ from rdp.infrastructure.config.loader import load_embodiments, load_rules, load_
 from rdp.infrastructure.faults import fault_injector_from_env
 from rdp.infrastructure.persistence.catalog import SqliteCatalog, SqliteUnitOfWork
 from rdp.infrastructure.sources.lerobot_adapter import LeRobotAdapter
+from rdp.infrastructure.sources.rlds_adapter import RLDSAdapter
 from rdp.infrastructure.sources.upstream_fetch import UpstreamFetcher
 from rdp.infrastructure.storage.jsonl_writer import JsonlSubsetWriter
 from rdp.infrastructure.storage.maintenance import StoreMaintenance
@@ -120,10 +121,13 @@ class Container:
         return self.catalog.unit_of_work(self.clock.now_iso())
 
     def adapter_for(self, source: Source) -> SourcePort:
+        fetcher = UpstreamFetcher(self.paths.cache)
         if source.kind == "lerobot":
-            return LeRobotAdapter(UpstreamFetcher(self.paths.cache), self.embodiments)
+            return LeRobotAdapter(fetcher, self.embodiments)
+        if source.kind == "rlds":
+            return RLDSAdapter(fetcher, self.embodiments, source.shard_layout_revision)
         raise NotImplementedError(
-            f"no adapter for kind {source.kind!r} yet; sources C and D arrive in M3/M4"
+            f"no adapter for kind {source.kind!r} yet; source D arrives in M4"
         )
 
     def ingest(self) -> IngestEpisodes:
