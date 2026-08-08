@@ -550,7 +550,7 @@ qc_results(id PK, episode_uid, rule_id, verdict, metrics_json, reason, run_id,
 runs(run_id PK, started_at, finished_at, status, args_json, stats_json,
      resumed_from)         -- non-null exactly when this run picked up an interrupted one
 
-exports(export_id PK, run_id, budget_frames, strategy, path, stats_json, created_at)
+exports(export_id PK, run_id, budget_frames, strategy, seed, embodiment, include_review, path, n_episodes, n_frames, stats_json, created_at)
 ```
 
 `status` / `stage` state machine:
@@ -626,7 +626,9 @@ qc.before      qc.mid_rule   qc.after_episode_n commit.after_file_before_db
 
 ## 6. Training Subset Export
 
-CLI: `rdp export --budget 50000 --strategy balanced [--embodiment <id>] --out exports/subset.jsonl`
+CLI: `rdp export --budget 50000 --strategy balanced [--embodiment <id>] [--seed 7] --out exports/subset.jsonl`
+
+`balanced` is the default strategy; `sequential` remains available as its control (ADR 016 §4 measures the difference: on a 20 000-frame budget `sequential` gives 100% of it to one embodiment).
 
 The default is a cross-embodiment mixed subset (the brief asks precisely how the budget is divided across sources and embodiments, and cross-embodiment training is a real downstream use — models absorb the heterogeneity, which is possible only because this schema preserved each embodiment's native semantics). Single-embodiment training uses `--embodiment` to filter, moving the filter from downstream up into the export layer so budget is not wasted.
 
@@ -634,12 +636,15 @@ The default is a cross-embodiment mixed subset (the brief asks precisely how the
 
 1. Select only from episodes with `qc_verdict == PASS` (`REVIEW` can be included with `--include-review`; excluded by default).
 2. The first stratification is by **embodiment**, not by source — training cares about coverage of embodiments and action spaces; the source is merely a storage fact.
-3. **Between-group** quotas use **square-root smoothing**: $w_i = \sqrt{N_i} \big/ \sum_j \sqrt{N_j}$ (where $N_i$ is the eligible frame count of embodiment group $i$), then apply a floor and cap per group (e.g. no group above 40% of the total budget, none below 5%). Rationale: allocating strictly proportionally to frame count lets ALOHA's 50 Hz data drown pusht's 10 Hz (5× the frames, but not 5× the information); allocating uniformly wastes the diversity of large sources. Square root is the standard compromise (the same technique used for multilingual NLP corpus sampling).
+3. **Between-group** quotas use **square-root smoothing**: $w_i = \sqrt{N_i} \big/ \sum_j \sqrt{N_j}$ (where $N_i$ is the eligible frame count of embodiment group $i$), then apply a floor and cap per group (no group above 40% of the total budget, none below 5%). Rationale: allocating strictly proportionally to frame count lets ALOHA's 50 Hz data drown pusht's 10 Hz (5× the frames, but not 5× the information); allocating uniformly wastes the diversity of large sources. Square root is the standard compromise (the same technique used for multilingual NLP corpus sampling). Clamping is **iterative** — pinning one group changes what the rest must sum to — and both bounds give way to `1/n` when they cannot hold for every group (ADR 016 §1). Measured on this corpus, ALOHA's share goes 60.4% proportional → 43.8% smoothed → 40.0% clamped.
 4. **Within a group**, select episodes by QC quality score first (no REVIEW hits before any REVIEW hits), then round-robin over `(source, task)` to avoid one task consuming the whole quota. Note that in this round source and embodiment happen to map one-to-one, so round-robin by source is a degenerate identity; it only matters when several sources share an embodiment (e.g. two UR5 datasets) — this is the companion detail to "stratify by embodiment, not source", without which one source could consume the whole quota for that embodiment.
-5. The frame budget is an **upper bound, not a target**: only whole episodes are packed, and packing stops when the next episode does not fit. **No truncation, and no option to truncate.** The arithmetic: without truncation the shortfall is at most one episode's length (< 2% for a 50k-frame budget, imperceptible in training); with truncation the cost is manufacturing episode boundaries that do not exist upstream (worst case: cutting off the final frames carrying `success=True`, silently turning a successful demonstration into unlabeled data), and the part cut off is exactly the highest-information tail (the moment of grasping/placing). Introducing a whole vocabulary of fake boundaries and downstream special cases to save < 2% of the budget is not a trade worth making. The report and the `exports` table record `budget_used / budget`; if the budget is smaller than the shortest eligible episode, the export errors out rather than degrading into truncation.
-6. `--seed` is fixed so exports are reproducible; the `exports` table records the strategy and statistics.
+5. A group that **cannot spend its quota** (`ur5_single_arm` has 738 eligible frames against a quota of 1 606) releases the remainder, which is re-offered to the groups that still have episodes, in weight order, until nothing fits anywhere. The cap is deliberately **not** re-applied during redistribution: it exists to stop one embodiment crowding out others, and once nobody else wants the budget, honouring it would discard real training frames (ADR 016 §2). This is also what makes the shortfall guarantee below hold per group and not just globally.
+6. The frame budget is an **upper bound, not a target**: only whole episodes are packed, and an episode that does not fit is skipped rather than shortened. **No truncation, and no option to truncate.** The arithmetic: without truncation the shortfall is smaller than every episode left behind; with truncation the cost is manufacturing episode boundaries that do not exist upstream (worst case: cutting off the final frames carrying `success=True`, silently turning a successful demonstration into unlabeled data), and the part cut off is exactly the highest-information tail (the moment of grasping/placing). Introducing a whole vocabulary of fake boundaries and downstream special cases to save that margin is not a trade worth making. The report and the `exports` table record `budget_used / budget`; if the budget is smaller than the shortest eligible episode, the export errors out rather than degrading into truncation.
+7. `--seed` is fixed so exports are reproducible. It orders each `(source, task)` bucket by `blake2b(seed:episode_uid)` rather than by seeding an RNG, so the result is a pure function of episode identity and cannot depend on iteration order (ADR 016 §3); without a seed the order is the episode uid, which is equally reproducible. The `exports` table records the strategy, the seed, both filters and the per-group quota-versus-take statistics — everything the export cannot be replayed without.
 
 Output line (JSONL) fields: `source_id, embodiment, action_space, action_dim, physical_dim, episode_uid, frame_start, frame_end, n_frames, fps, capabilities, boundary, task, frames_path, key_stats(mean/std/min/max per physical channel), qc_verdict, qc_rules_hit`. `frame_start/frame_end` are always the whole `[0, n_frames)`; the fields are retained so consumers can locate the frame range without a second metadata lookup.
+
+One caveat on the example budget: the committed corpus is **41 418 eligible frames**, so at `--budget 50000` everything fits and every strategy returns the same subset. The stratification is only observable below that (ADR 016).
 
 ---
 

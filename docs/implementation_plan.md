@@ -544,19 +544,38 @@ and make its behavior provable rather than plausible.
 rdp export --budget 50000 --strategy balanced --seed 7 --out exports/a.jsonl
 rdp export --budget 50000 --strategy balanced --seed 7 --out exports/b.jsonl
 diff exports/a.jsonl exports/b.jsonl        # must be empty
-pytest tests/unit/test_sampler.py -q
+pytest tests/unit/test_balanced_sampler.py tests/integration/test_export.py -q
 ```
 
 **Exit criteria**
 
-- [ ] Unit tests pin the quota math for a synthetic four-group corpus with a 100× frame-count
+- [x] Unit tests pin the quota math for a synthetic four-group corpus with a 100× frame-count
       spread, including floor/cap clamping and the residual redistribution rule.
-- [ ] Identical seeds produce byte-identical exports; different seeds differ.
-- [ ] No exported entry has `frame_range != [0, n_frames)` — enforced by invariant 5, with a test
+- [x] Identical seeds produce byte-identical exports; different seeds differ. _On the real
+      corpus at a binding budget: `--seed 7` takes 128 episodes / 20 000 frames, `--seed 8`
+      takes 130 / 19 985._
+- [x] No exported entry has `frame_range != [0, n_frames)` — enforced by invariant 5, with a test
       that attempts truncation and expects a domain error.
-- [ ] `budget_used <= budget` and the shortfall is smaller than the longest unselected episode.
-- [ ] A budget below the shortest eligible episode exits non-zero with a clear message.
-- [ ] With `--embodiment aloha_bimanual`, 100% of the budget goes to that embodiment.
+- [x] `budget_used <= budget` and the shortfall is smaller than the longest unselected episode.
+      _Stronger, and tested as such: it is smaller than the **shortest** unselected episode,
+      which is what the redistribution loop's termination condition gives._
+- [x] A budget below the shortest eligible episode exits non-zero with a clear message.
+- [x] With `--embodiment aloha_bimanual`, 100% of the budget goes to that embodiment.
+
+**Findings (see [ADR 016](adr/016-balanced-curation-quotas-and-seed.md))**
+
+1. A floor and a cap cannot be applied in one pass — clamping one group changes what the others
+   must sum to. Clamping is iterative, and both bounds give way to `1/n` rather than produce
+   weights that do not sum to one (two groups × a 40% cap leaves 20% allocated to nobody).
+2. Residual redistribution must **ignore the cap**. `ur5_single_arm` has 738 eligible frames
+   against a 1 606-frame quota; re-applying the cap to the remainder would discard real training
+   frames to keep the table tidy.
+3. The seed is a keyed digest of the episode uid, not an RNG shuffle, so the selection cannot
+   depend on iteration order.
+4. **The assessment's own example budget does not exercise the strategy.** The eligible corpus is
+   41 418 frames, so at `--budget 50000` everything fits and every strategy agrees. All the
+   measurements above are taken at 20 000, where the budget binds — at which point `sequential`
+   is shown to spend 100% of the budget on one embodiment and `balanced` spreads it over four.
 
 ---
 

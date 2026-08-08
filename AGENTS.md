@@ -21,7 +21,7 @@ fixed-width vector is wrong and is explicitly rejected by the design.
 
 ## Current State
 
-**M0–M5 are complete. M6 is next: export strategies (`balanced`) and the report.**
+**M0–M6 are complete. M7 is next: reporting depth and the observability seams.**
 
 `rdp run && rdp export && rdp report` works end to end on real data for **all four** sources —
 `pusht`, `aloha_sim_insertion`, `berkeley_ur5` and `epic100`: **202 episodes committed, 0
@@ -46,15 +46,27 @@ the data's _structure_, not of its _size_.
 M5 set every threshold from a measured distribution rather than a guess — `rdp stats` writes
 `reports/qc_stats.md`, and each parameter in `config/qc.yaml` carries the number it was derived
 from. Two findings are worth carrying forward. First, a threshold can be **unreachable**: the
-first ACTION_JERK draft compared `max` against `p99.9`, a ratio that never exceeded 1.57 anywhere
+first ACTION*JERK draft compared `max` against `p99.9`, a ratio that never exceeded 1.57 anywhere
 in the corpus, so a 5× rule could not have fired on any input (ADR 014). Second, a rule must
-check that a channel's declared range _means_ what the rule assumes — STATIC_EPISODE's travel
+check that a channel's declared range \_means* what the rule assumes — STATIC_EPISODE's travel
 test read a gripper's `[-1, 1]` and a camera quaternion's `[-1, 1]` as distances and flagged 17
 healthy episodes. The corpus FAIL rate is **0%** and was left that way; manufacturing a FAIL to
 prove the rules work was explicitly rejected. See ADR 014 and ADR 015 — the latter also records a
 latent M4 defect M5 surfaced: `stream_specs` lived on `EpisodeMeta` but was never persisted, so a
 REDO_NORMALIZE hid it and the first REDO_QC failed 40 of 60 epic episodes. **Persist every field
 of an aggregate, and test the round trip, not the write.**
+
+M6 replaced the placeholder `sequential` export with `balanced` — clamped square-root quotas per
+embodiment, quality-first within a group, round-robin across tasks, and a seed that is a keyed
+digest of the episode uid rather than an RNG shuffle. Its sharpest lesson is a measurement lesson
+again: **the assessment's own 50 000-frame example budget does not exercise the strategy.** The
+eligible corpus is 41 418 frames, so at that budget everything fits and every strategy produces
+the same file; all of M6's evidence is taken at 20 000, where `sequential` spends 100% of the
+budget on `aloha_bimanual` and `balanced` spreads it 40 / 29 / 23 / 8 over four embodiments. Two
+structural findings: a floor and a cap cannot be applied in one pass (clamping is iterative, and
+both bounds give way to `1/n`), and the redistribution of an under-filled group's leftover must
+**ignore** the cap — `ur5_single_arm` offers 738 frames against a 1 606 quota, and re-capping the
+remainder would discard real frames to keep the table tidy. See ADR 016.
 
 ```
 docs/technical_design.md      # the design authority — domain model, schema, QC, layering
@@ -71,6 +83,8 @@ docs/adr/010..013             # M4's: EPIC's two frame numberings; layered avail
 docs/adr/014..015             # M5's: thresholds from measured distributions and the unreachable
                               #   ratio; episode facts (segment, termination_column) and the
                               #   unpersisted stream_specs that only REDO_QC could expose
+docs/adr/016                  # M6's: clamped square-root quotas, residual redistribution that
+                              #   ignores the cap, and a seed that is a digest, not a shuffle
 docs/assessment.md            # original requirements (Chinese)
 docs/assessment_for_ai.md     # requirements, agent-facing
 docs/ai_chat_sessions/*.json  # raw AI transcripts — archival, do not edit or translate
@@ -80,17 +94,18 @@ config/{sources,embodiments,qc}.yaml   # sources, per-embodiment channel semanti
 reports/qc_stats.md           # `rdp stats` output — the distributions those thresholds read
 spikes/probe_*.py             # throwaway probes; _out/*.txt is their captured output
 src/rdp/{domain,application,infrastructure,interfaces}/
-tests/{unit,integration,acceptance,fakes,fixtures}/     # 231 tests; domain coverage 97.1%
+tests/{unit,integration,acceptance,fakes,fixtures}/     # 250 tests; domain coverage 97.3%
 scripts/make_fixtures.py      # regenerates the four mini fixtures (~505 KB total)
 scripts/demo_crash_resume.sh  # real kill -9 against a throwaway store under .demo/
 ```
 
-**Read `docs/adr/000`–`015` before touching an adapter or the resume logic.** M0 measured four
+**Read `docs/adr/000`–`016` before touching an adapter or the resume logic.** M0 measured four
 things the design had guessed wrong, M1 a fifth, M2 corrected one exit criterion that was
 physically unachievable as written, M3 corrected C's episode identity, its padding rule and the
 rotation representation, M4 reversed which of EPIC's two frame numberings we store and split
-its IMU into two streams, and M5 replaced two guessed QC thresholds with measured ones and added
-`stream_specs_json` to the catalog; all are reconciled in `docs/technical_design.md`.
+its IMU into two streams, M5 replaced two guessed QC thresholds with measured ones and added
+`stream_specs_json` to the catalog, and M6 added four columns to `exports` so a `balanced`
+subset can be replayed; all are reconciled in `docs/technical_design.md`.
 
 Only what a milestone needs gets built; do not scaffold ahead of the plan.
 
@@ -161,7 +176,7 @@ For layer placement, bounded contexts, and the port catalogue, load the `archite
 ```bash
 uv sync                                  # install
 uv run rdp run --source pusht            # ingest; --source is required, there is no all-sources mode
-uv run rdp export --budget 50000 --strategy sequential --out exports/subset.jsonl
+uv run rdp export --budget 20000 --strategy balanced --seed 7 --out exports/subset.jsonl
 uv run rdp report
 uv run rdp stats --out reports/qc_stats.md   # metric distributions behind every qc.yaml threshold
 
@@ -172,8 +187,10 @@ uv run ruff check . && uv run mypy src/rdp && uv run lint-imports
 bash scripts/demo_crash_resume.sh        # real kill -9, reproduces the reviewer's scenario
 ```
 
-`sequential` is the only export strategy so far; `balanced` is M6's, and `rdp doctor` is not
-implemented. Do not cite either as if it existed.
+`balanced` is the default export strategy; `sequential` is kept as its control, and is the
+reason M6 can show what the quotas buy. `rdp doctor` is **not** implemented — do not cite it as
+if it existed. Note that `--budget 50000` does not bind on this corpus (41 418 eligible frames);
+use 20 000 or less when demonstrating curation.
 
 ## Test Strategy
 
@@ -181,8 +198,8 @@ Bug fixes and features are **regression-first**: write the failing test, watch i
 
 | Layer         | Count | Dependencies                                         | Budget |
 | ------------- | ----- | ---------------------------------------------------- | ------ |
-| `unit`        | 152   | none — domain only, all fakes                        | < 2 s  |
-| `integration` | 53    | real SQLite in tmpdir, real parquet, mini fixtures   | < 20 s |
+| `unit`        | 164   | none — domain only, all fakes                        | < 2 s  |
+| `integration` | 60    | real SQLite in tmpdir, real parquet, mini fixtures   | < 20 s |
 | `acceptance`  | 26    | in-process crash matrix + real subprocess `os._exit` | < 60 s |
 
 - Crash resume is tested through the `FaultInjector` port (a **production port created for
