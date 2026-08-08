@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from rdp.domain.episode import CanonicalEpisode, Episode, EpisodeMeta, make_uid
+from rdp.domain.episode_state import EpisodeState
 from rdp.domain.frames import FrameTable
 from rdp.domain.qc.rule import RuleResult
 from rdp.domain.run import IngestionRun
@@ -88,6 +89,24 @@ class EpisodeRepository(Protocol):
     def counts_by_stage(self) -> dict[str, int]: ...
 
 
+class EpisodeStateRepository(Protocol):
+    """The stage machine's scheduling row: attempt count and lease (design §4).
+
+    Separate from `EpisodeRepository` because it answers a different question — not "what is
+    this episode" but "who is working on it and since when".
+    """
+
+    def get(self, uid: str) -> EpisodeState | None: ...
+
+    def upsert(self, state: EpisodeState) -> None:
+        """Idempotent on `episode_uid`. Written in the same transaction as the stage advance."""
+        ...
+
+    def list_leased(self) -> list[EpisodeState]:
+        """Every row still claiming a lease — the input to the recovery pass."""
+        ...
+
+
 class QCResultRepository(Protocol):
     def record(self, episode_uid: str, run_id: str, results: Sequence[RuleResult]) -> None:
         """Idempotent on `(episode_uid, rule_id, run_id)`."""
@@ -108,6 +127,12 @@ class RunRepository(Protocol):
     def get(self, run_id: str) -> Mapping[str, Any] | None: ...
 
     def latest(self) -> Mapping[str, Any] | None: ...
+
+    def unfinished(self) -> list[Mapping[str, Any]]:
+        """Runs with no `finished_at`: a process that died without writing its own epitaph."""
+        ...
+
+    def mark_interrupted(self, run_id: str, now: str) -> None: ...
 
 
 class ExportRepository(Protocol):
@@ -138,6 +163,9 @@ class UnitOfWork(AbstractContextManager["UnitOfWork"], Protocol):
 
     @property
     def episodes(self) -> EpisodeRepository: ...
+
+    @property
+    def episode_states(self) -> EpisodeStateRepository: ...
 
     @property
     def qc_results(self) -> QCResultRepository: ...
@@ -174,6 +202,24 @@ class FrameStore(Protocol):
 
 class Clock(Protocol):
     def now_iso(self) -> str: ...
+
+    def horizon_iso(self, seconds: float) -> str:
+        """`now + seconds`. Lease arithmetic belongs to the clock, not to the domain."""
+        ...
+
+
+class ArtifactMaintenance(Protocol):
+    """Filesystem hygiene for the recovery pass (design §5, iron rule 3).
+
+    The catalog can only be trusted about files it can still see: an artifact that no longer
+    opens must demote its episode, or the pipeline would export a row pointing at rubble.
+    """
+
+    def sweep_orphan_temp_files(self) -> list[str]:
+        """Delete every `*.tmp` left by a write that never reached its `os.replace`."""
+        ...
+
+    def frames_readable(self, path: str) -> bool: ...
 
 
 class SubsetWriter(Protocol):

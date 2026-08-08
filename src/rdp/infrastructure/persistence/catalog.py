@@ -13,13 +13,21 @@ from types import TracebackType
 
 from rdp.infrastructure.persistence.repositories import (
     SqliteEpisodeRepository,
+    SqliteEpisodeStateRepository,
     SqliteExportRepository,
     SqliteQCResultRepository,
     SqliteRunRepository,
     SqliteSourceRepository,
 )
 
-SCHEMA_USER_VERSION = 1
+SCHEMA_USER_VERSION = 2
+
+# Every schema change so far has been additive, so an existing catalog is upgraded in place
+# instead of being rebuilt. `raw/` stays authoritative either way (design §2.4).
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("episodes", "ruleset_version", "TEXT"),
+    ("runs", "resumed_from", "TEXT"),
+)
 
 
 class SqliteUnitOfWork:
@@ -28,6 +36,7 @@ class SqliteUnitOfWork:
     def __init__(self, conn: sqlite3.Connection, ruleset_version: str, now: str) -> None:
         self._conn = conn
         self.episodes = SqliteEpisodeRepository(conn)
+        self.episode_states = SqliteEpisodeStateRepository(conn)
         self.qc_results = SqliteQCResultRepository(conn, ruleset_version, now)
         self.runs = SqliteRunRepository(conn)
         self.exports = SqliteExportRepository(conn)
@@ -80,7 +89,15 @@ class SqliteCatalog:
     def _bootstrap(self) -> None:
         sql = resources.files("rdp.infrastructure.persistence").joinpath("schema.sql").read_text()
         self._conn.executescript(sql)
+        self._upgrade()
         self._conn.execute(f"PRAGMA user_version = {SCHEMA_USER_VERSION}")
+
+    def _upgrade(self) -> None:
+        """Add columns a catalog written by an older schema version does not have yet."""
+        for table, column, declaration in _ADDED_COLUMNS:
+            present = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            if column not in present:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
     def unit_of_work(self, now: str) -> SqliteUnitOfWork:
         return SqliteUnitOfWork(self._conn, self._ruleset_version, now)

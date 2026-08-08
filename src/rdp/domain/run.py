@@ -13,6 +13,9 @@ from rdp.domain.qc.rule import RuleResult
 
 DISCOVERED = "discovered"
 SKIPPED_ALREADY_PROCESSED = "skipped_already_processed"
+STALE_RENORMALIZE = "stale_renormalize"
+STALE_REQC = "stale_reqc"
+RESUMED = "resumed_in_progress"
 FETCHED = "fetched"
 NORMALIZED = "normalized"
 QC_DONE = "qc_done"
@@ -22,6 +25,9 @@ FAILED = "failed"
 COUNTERS = (
     DISCOVERED,
     SKIPPED_ALREADY_PROCESSED,
+    STALE_RENORMALIZE,
+    STALE_REQC,
+    RESUMED,
     FETCHED,
     NORMALIZED,
     QC_DONE,
@@ -37,6 +43,9 @@ class IngestionRun:
     args: dict[str, Any] = field(default_factory=dict)
     finished_at: str | None = None
     status: str = "RUNNING"
+    resumed_from: str | None = None
+    """The interrupted run this one picked up from; None when the previous run finished."""
+    recovery: dict[str, Any] = field(default_factory=dict)
     counters: Counter[str] = field(default_factory=Counter)
     rule_counts: dict[str, Counter[str]] = field(default_factory=lambda: defaultdict(Counter))
     skip_reasons: Counter[str] = field(default_factory=Counter)
@@ -61,6 +70,7 @@ class IngestionRun:
     def stats(self) -> dict[str, Any]:
         return {
             "counters": {name: self.counters.get(name, 0) for name in COUNTERS},
+            "recovery": dict(self.recovery),
             "rule_counts": {
                 rule: dict(counts) for rule, counts in sorted(self.rule_counts.items())
             },

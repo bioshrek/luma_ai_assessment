@@ -48,6 +48,14 @@ def run(
         started_at=container.clock.now_iso(),
         args={"source": source, "max_episodes": max_episodes},
     )
+    # Before anything is ingested: close out runs that died, release dead leases, delete orphan
+    # `*.tmp` files, and demote episodes whose artifacts no longer open (design §5).
+    recovery = container.recover()(ingestion.run_id)
+    ingestion.resumed_from = recovery.resumed_from
+    ingestion.recovery = recovery.as_dict()
+    if not recovery.is_clean:
+        console.print(f"[yellow]recovered: {recovery.as_dict()}[/yellow]")
+
     with container.unit_of_work() as uow:
         uow.sources.upsert(definition)
         uow.runs.start(ingestion)
@@ -67,6 +75,8 @@ def run(
 
     _finish(container, ingestion)
     console.print(f"[green]run {ingestion.run_id} {ingestion.status}[/green]")
+    if ingestion.resumed_from:
+        console.print(f"  resumed from {ingestion.resumed_from}")
     for name, value in sorted(ingestion.stats()["counters"].items()):
         console.print(f"  {name:<28} {value}")
 

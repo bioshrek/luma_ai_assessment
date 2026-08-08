@@ -30,12 +30,22 @@ def render_markdown(report: Report) -> str:
         f"- started: {run['started_at']}",
         f"- finished: {run['finished_at'] or '(unfinished)'}",
         f"- status: {run['status']}",
+        f"- resumed_from: {run.get('resumed_from') or '(not a resume)'}",
         f"- args: `{json.dumps(run['args'], sort_keys=True)}`",
         "",
         "## This run",
         "",
     ]
     lines += _table(["counter", "value"], sorted(run["stats"].get("counters", {}).items()))
+
+    recovery = {k: v for k, v in run["stats"].get("recovery", {}).items() if v}
+    if recovery:
+        # What the crash left behind, and what was done about it.
+        lines += ["", "## Recovery", ""]
+        lines += _table(
+            ["finding", "value"],
+            [(key, json.dumps(value)) for key, value in sorted(recovery.items())],
+        )
 
     skip_reasons = run["stats"].get("skip_reasons", {})
     if skip_reasons:
@@ -107,6 +117,7 @@ class FileRunReporter:
             "started_at": run.started_at,
             "finished_at": run.finished_at,
             "status": run.status,
+            "resumed_from": run.resumed_from,
             "args": run.args,
             "stats": run.stats(),
         }

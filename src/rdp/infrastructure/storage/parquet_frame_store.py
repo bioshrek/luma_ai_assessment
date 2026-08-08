@@ -41,7 +41,7 @@ class ParquetFrameStore:
         return str(directory.relative_to(self.root))
 
     def read_frames(self, path: str) -> FrameTable:
-        table = pq.read_table(self._resolve(path) / FRAMES_FILE)
+        table = pq.read_table(self.resolve(path) / FRAMES_FILE)
         raw_columns: tuple[str, ...] = ()
         metadata = table.schema.metadata or {}
         if _RAW_COLUMNS_KEY in metadata:
@@ -50,10 +50,11 @@ class ParquetFrameStore:
         return FrameTable(columns=columns, raw_frame_columns=raw_columns)
 
     def read_meta(self, path: str) -> EpisodeMeta:
-        payload = json.loads((self._resolve(path) / META_FILE).read_text())
+        payload = json.loads((self.resolve(path) / META_FILE).read_text())
         return EpisodeMeta.model_validate(payload)
 
-    def _resolve(self, path: str) -> Path:
+    def resolve(self, path: str) -> Path:
+        """`episodes.frames_path` is stored relative to the store root, so the root can move."""
         candidate = Path(path)
         return candidate if candidate.is_absolute() else self.root / candidate
 

@@ -14,16 +14,18 @@ from rdp.application.build_report import BuildReport
 from rdp.application.export_subset import ExportSubset
 from rdp.application.ingest_episodes import IngestEpisodes
 from rdp.application.ports import SourcePort
+from rdp.application.recover_incomplete import RecoverIncomplete
 from rdp.domain.embodiment import EmbodimentRegistry
 from rdp.domain.qc.rule import QCRule
 from rdp.domain.source import Source
 from rdp.infrastructure.clock import SystemClock
 from rdp.infrastructure.config.loader import load_embodiments, load_rules, load_sources
-from rdp.infrastructure.faults import NoopFaultInjector
+from rdp.infrastructure.faults import fault_injector_from_env
 from rdp.infrastructure.persistence.catalog import SqliteCatalog, SqliteUnitOfWork
 from rdp.infrastructure.sources.lerobot_adapter import LeRobotAdapter
 from rdp.infrastructure.sources.upstream_fetch import UpstreamFetcher
 from rdp.infrastructure.storage.jsonl_writer import JsonlSubsetWriter
+from rdp.infrastructure.storage.maintenance import StoreMaintenance
 from rdp.infrastructure.storage.parquet_frame_store import ParquetFrameStore
 
 DEFAULT_STORE = Path("store")
@@ -110,6 +112,10 @@ class Container:
     def frame_store(self) -> ParquetFrameStore:
         return ParquetFrameStore(self.paths.normalized)
 
+    @cached_property
+    def maintenance(self) -> StoreMaintenance:
+        return StoreMaintenance(self.paths.store, self.frame_store)
+
     def unit_of_work(self) -> SqliteUnitOfWork:
         return self.catalog.unit_of_work(self.clock.now_iso())
 
@@ -125,10 +131,15 @@ class Container:
             uow_factory=self.unit_of_work,
             frame_store=self.frame_store,
             clock=self.clock,
-            faults=NoopFaultInjector(),
+            faults=fault_injector_from_env(),
             rules=self.rules,
             ruleset_version=self.ruleset_version,
             raw_root=self.paths.raw,
+        )
+
+    def recover(self) -> RecoverIncomplete:
+        return RecoverIncomplete(
+            uow_factory=self.unit_of_work, maintenance=self.maintenance, clock=self.clock
         )
 
     def export(self) -> ExportSubset:

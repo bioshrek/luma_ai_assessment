@@ -12,6 +12,7 @@ from rdp.domain.boundary import EpisodeBoundary
 from rdp.domain.camera import CameraSpec
 from rdp.domain.capabilities import Capabilities
 from rdp.domain.episode import Episode, EpisodeMeta
+from rdp.domain.episode_state import EpisodeState
 from rdp.domain.provenance import Provenance
 from rdp.domain.qc.rule import EpisodeVerdict, RuleResult, Verdict
 from rdp.domain.run import IngestionRun
@@ -25,7 +26,7 @@ _EPISODE_COLUMNS = (
     "fps_nominal, fps_effective, duration_s, capabilities_json, action_spec_json, "
     "state_spec_json, camera_json, provenance_json, boundary_json, raw_extra_json, "
     "raw_columns_json, stats_json, frames_path, qc_verdict, last_error, schema_version, "
-    "adapter_version, first_seen_run, last_update_run, updated_at"
+    "adapter_version, ruleset_version, first_seen_run, last_update_run, updated_at"
 )
 
 # `SignalSpec` exposes dim / physical_dim / space / is_delta as computed fields: they are stored
@@ -96,6 +97,47 @@ class SqliteEpisodeRepository:
         return {row[0]: row[1] for row in rows}
 
 
+_STATE_COLUMNS = (
+    "episode_uid, stage, attempt, last_error, lease_owner, lease_expires_at, updated_at"
+)
+
+
+class SqliteEpisodeStateRepository:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def get(self, uid: str) -> EpisodeState | None:
+        row = self._conn.execute(
+            f"SELECT {_STATE_COLUMNS} FROM episode_state WHERE episode_uid = ?", (uid,)
+        ).fetchone()
+        return _row_to_state(row) if row is not None else None
+
+    def upsert(self, state: EpisodeState) -> None:
+        self._conn.execute(
+            f"INSERT INTO episode_state ({_STATE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(episode_uid) DO UPDATE SET stage = excluded.stage, "
+            "attempt = excluded.attempt, last_error = excluded.last_error, "
+            "lease_owner = excluded.lease_owner, lease_expires_at = excluded.lease_expires_at, "
+            "updated_at = excluded.updated_at",
+            (
+                state.episode_uid,
+                state.stage.value,
+                state.attempt,
+                state.last_error,
+                state.lease_owner,
+                state.lease_expires_at,
+                state.updated_at,
+            ),
+        )
+
+    def list_leased(self) -> list[EpisodeState]:
+        rows = self._conn.execute(
+            f"SELECT {_STATE_COLUMNS} FROM episode_state "
+            "WHERE lease_owner IS NOT NULL ORDER BY episode_uid"
+        ).fetchall()
+        return [_row_to_state(row) for row in rows]
+
+
 class SqliteQCResultRepository:
     def __init__(self, conn: sqlite3.Connection, ruleset_version: str, now: str) -> None:
         self._conn = conn
@@ -146,15 +188,25 @@ class SqliteQCResultRepository:
         return out
 
 
+_RUN_COLUMNS = "run_id, started_at, finished_at, status, args_json, stats_json, resumed_from"
+
+
 class SqliteRunRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
     def start(self, run: IngestionRun) -> None:
         self._conn.execute(
-            "INSERT INTO runs (run_id, started_at, status, args_json, stats_json) "
-            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id) DO NOTHING",
-            (run.run_id, run.started_at, run.status, _dumps(run.args), _dumps(run.stats())),
+            "INSERT INTO runs (run_id, started_at, status, args_json, stats_json, resumed_from) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(run_id) DO NOTHING",
+            (
+                run.run_id,
+                run.started_at,
+                run.status,
+                _dumps(run.args),
+                _dumps(run.stats()),
+                run.resumed_from,
+            ),
         )
 
     def finish(self, run: IngestionRun) -> None:
@@ -165,18 +217,29 @@ class SqliteRunRepository:
 
     def get(self, run_id: str) -> Mapping[str, Any] | None:
         row = self._conn.execute(
-            "SELECT run_id, started_at, finished_at, status, args_json, stats_json "
-            "FROM runs WHERE run_id = ?",
-            (run_id,),
+            f"SELECT {_RUN_COLUMNS} FROM runs WHERE run_id = ?", (run_id,)
         ).fetchone()
         return _row_to_run(row) if row is not None else None
 
     def latest(self) -> Mapping[str, Any] | None:
         row = self._conn.execute(
-            "SELECT run_id, started_at, finished_at, status, args_json, stats_json "
-            "FROM runs ORDER BY started_at DESC, rowid DESC LIMIT 1"
+            f"SELECT {_RUN_COLUMNS} FROM runs ORDER BY started_at DESC, rowid DESC LIMIT 1"
         ).fetchone()
         return _row_to_run(row) if row is not None else None
+
+    def unfinished(self) -> list[Mapping[str, Any]]:
+        rows = self._conn.execute(
+            f"SELECT {_RUN_COLUMNS} FROM runs WHERE finished_at IS NULL ORDER BY started_at, rowid"
+        ).fetchall()
+        return [_row_to_run(row) for row in rows]
+
+    def mark_interrupted(self, run_id: str, now: str) -> None:
+        """A run that never wrote `finished_at` did not stop — it died. Record that, once."""
+        self._conn.execute(
+            "UPDATE runs SET status = 'INTERRUPTED', finished_at = ? "
+            "WHERE run_id = ? AND finished_at IS NULL",
+            (now, run_id),
+        )
 
 
 class SqliteExportRepository:
@@ -265,6 +328,7 @@ def _episode_to_row(episode: Episode) -> tuple[Any, ...]:
         episode.last_error,
         meta.schema_version if meta else None,
         episode.adapter_version,
+        episode.ruleset_version,
         episode.first_seen_run,
         episode.last_update_run,
         episode.updated_at,
@@ -308,10 +372,23 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
         content_hash=row["content_hash"],
         frames_path=row["frames_path"],
         adapter_version=row["adapter_version"],
+        ruleset_version=row["ruleset_version"],
         channel_stats=stats,
         last_error=row["last_error"],
         first_seen_run=row["first_seen_run"] or "",
         last_update_run=row["last_update_run"] or "",
+        updated_at=row["updated_at"] or "",
+    )
+
+
+def _row_to_state(row: sqlite3.Row) -> EpisodeState:
+    return EpisodeState(
+        episode_uid=row["episode_uid"],
+        stage=IngestionStage(row["stage"]),
+        attempt=row["attempt"],
+        last_error=row["last_error"],
+        lease_owner=row["lease_owner"],
+        lease_expires_at=row["lease_expires_at"],
         updated_at=row["updated_at"] or "",
     )
 
@@ -322,6 +399,7 @@ def _row_to_run(row: sqlite3.Row) -> dict[str, Any]:
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
         "status": row["status"],
+        "resumed_from": row["resumed_from"],
         "args": json.loads(row["args_json"] or "{}"),
         "stats": json.loads(row["stats_json"] or "{}"),
     }

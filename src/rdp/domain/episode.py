@@ -161,6 +161,7 @@ class Episode(BaseModel):
     content_hash: str | None = None
     frames_path: str | None = None
     adapter_version: str | None = None
+    ruleset_version: str | None = None
     channel_stats: dict[str, ChannelStats] = Field(default_factory=dict)
     last_error: str | None = None
     first_seen_run: str = ""
@@ -224,13 +225,32 @@ class Episode(BaseModel):
             channel_stats=channel_stats,
         )
 
-    def qc_done(self, *, verdict: EpisodeVerdict, run_id: str, now: str) -> Episode:
+    def qc_done(
+        self, *, verdict: EpisodeVerdict, ruleset_version: str, run_id: str, now: str
+    ) -> Episode:
         return self._touched(
-            run_id, now, stage=self.stage.advance_to(IngestionStage.QC_DONE), qc_verdict=verdict
+            run_id,
+            now,
+            stage=self.stage.advance_to(IngestionStage.QC_DONE),
+            qc_verdict=verdict,
+            ruleset_version=ruleset_version,
         )
 
     def committed(self, *, run_id: str, now: str) -> Episode:
         return self._touched(run_id, now, stage=self.stage.advance_to(IngestionStage.COMMITTED))
+
+    def requeue(self, *, stage: IngestionStage, reason: str, run_id: str, now: str) -> Episode:
+        """Rewind to an earlier stage so the pipeline redoes it — staleness and recovery both.
+
+        The verdict goes back to PENDING because it was reached by code or thresholds we are
+        about to replace; carrying it forward would let a stale conclusion look current.
+        """
+        return self._touched(
+            run_id,
+            now,
+            stage=self.stage.reset_to(stage, reason=reason),
+            qc_verdict=EpisodeVerdict.PENDING,
+        )
 
     def failed(self, *, error: str, run_id: str, now: str) -> Episode:
         return self.model_copy(
